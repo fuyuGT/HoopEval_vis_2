@@ -1536,7 +1536,7 @@ function App() {
 
     return (
       <Section
-        title="Overall Study Stats"
+        title="Study Progress"
         description="Admin view of completed non-admin sessions saved through the backend, with browser-local fallback."
         action={
           <Stack direction="row" spacing={1}>
@@ -1560,13 +1560,22 @@ function App() {
           ))}
         </Box>
 
-        <Box sx={{ display: "grid", gap: 1.25, gridTemplateColumns: { xs: "1fr", md: "repeat(3, 1fr)" }, mt: 1.25 }}>
+        <Box sx={{ mt: 2 }}>
+          <Typography variant="subtitle1" fontWeight={700} gutterBottom>
+            Response Breakdown
+          </Typography>
+          <Typography variant="body2" color="text.secondary" sx={{ mb: 1 }}>
+            Summaries of participants' first-ranked choices and selected coaching situations.
+          </Typography>
+        </Box>
+
+        <Box sx={{ display: "grid", gap: 1.25, gridTemplateColumns: { xs: "1fr", md: "repeat(3, 1fr)" } }}>
           <Paper elevation={0} sx={{ p: 1.5, border: "1px solid", borderColor: "divider" }}>
-            <Typography variant="subtitle2" gutterBottom>Top-ranked actions</Typography>
+            <Typography variant="subtitle2" gutterBottom>First-ranked actions</Typography>
             {renderCountList(stats.topActions)}
           </Paper>
           <Paper elevation={0} sx={{ p: 1.5, border: "1px solid", borderColor: "divider" }}>
-            <Typography variant="subtitle2" gutterBottom>Top-ranked players</Typography>
+            <Typography variant="subtitle2" gutterBottom>First-ranked players</Typography>
             {renderCountList(stats.topPlayers)}
           </Paper>
           <Paper elevation={0} sx={{ p: 1.5, border: "1px solid", borderColor: "divider" }}>
