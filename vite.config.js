@@ -56,6 +56,6 @@ function hoopEvalDataFilesPlugin() {
 }
 
 export default defineConfig({
-  base: process.env.VITE_BASE_PATH || "/HoopEval_vis_2/",
+  base: process.env.VITE_BASE_PATH || "/",
   plugins: [react(), hoopEvalDataFilesPlugin()],
 });

@@ -36,7 +36,7 @@ jobs:
         run: npm ci
 
       - name: Build site
-        run: npm run build
+        run: VITE_BASE_PATH=/HoopEval_vis_2/ npm run build
 
       - name: Upload artifact
         uses: actions/upload-pages-artifact@v4
