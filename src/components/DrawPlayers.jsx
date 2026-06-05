@@ -1,6 +1,8 @@
-import React, { useRef, useEffect, useState } from "react";
+import React, { useRef, useEffect, useMemo, useState } from "react";
 import * as d3 from "d3";
 import { BasketballCourt } from "./BasketballCourt";
+
+const frameDurationMs = 200;
 
 const DrawPlayerVisualization = ({
   width,
@@ -9,16 +11,12 @@ const DrawPlayerVisualization = ({
   isPlaying,
   currentStep,
   setCurrentStep,
+  setIsPlaying,
   qPlayer,
-  qBall,
   realPlayerActions, // 添加真实动作数据
+  showActionValues = true,
 }) => {
   const courtSVG = useRef();
-  const isPlayingRef = useRef(isPlaying);
-
-  useEffect(() => {
-    isPlayingRef.current = isPlaying;
-  }, [isPlaying]);
 
   const [newPlayerData, setNewPlayerData] = useState([]);
 
@@ -28,17 +26,25 @@ const DrawPlayerVisualization = ({
     }
   }, [playerData]);
 
-  const qColorScale = d3
-    .scaleSequential(d3.interpolateViridis)
-    .domain([-1.4, 0.3]) // 黄色对应高Q值
-    .clamp(true);
+  const qColorScale = useMemo(
+    () =>
+      d3
+        .scaleSequential(d3.interpolateViridis)
+        .domain([-1.4, 0.3]) // 黄色对应高Q值
+        .clamp(true),
+    [],
+  );
 
-  const arcGenerator = d3
-    .arc()
-    .innerRadius((d) => d.inner)
-    .outerRadius((d) => d.outer)
-    .startAngle((d) => d.start)
-    .endAngle((d) => d.end);
+  const arcGenerator = useMemo(
+    () =>
+      d3
+        .arc()
+        .innerRadius((d) => d.inner)
+        .outerRadius((d) => d.outer)
+        .startAngle((d) => d.start)
+        .endAngle((d) => d.end),
+    [],
+  );
 
   useEffect(() => {
     const svg = d3.select(courtSVG.current);
@@ -67,7 +73,7 @@ const DrawPlayerVisualization = ({
       const radius = d.agent_id === -1 ? width / 120 : width / 60;
       const clipPathId = `clip-path-${d.agent_id}-${T_type}`;
 
-      if (d.agent_id !== -1 && i > 0 && i <= 5) {
+      if (showActionValues && d.agent_id !== -1 && i > 0 && i <= 5) {
         const actionGroup = group.append("g").attr("class", "player-q-space");
         const rings = [
           { inner: radius + 2, outer: radius + 12, range: [1, 8] },
@@ -174,92 +180,36 @@ const DrawPlayerVisualization = ({
       
       if (d.agent_id === -1) group.raise();
     });
-  }, [playerData, width, T_type]);
+  }, [playerData, width, T_type, showActionValues, arcGenerator]);
 
-  // --- Animation Loop ---
+  // --- Linear playback clock ---
   useEffect(() => {
     if (!isPlaying) return;
+    if (!newPlayerData?.length || !newPlayerData[0]?.[T_type]?.length) return;
 
-    const groups = d3
-      .select(courtSVG.current)
-      .selectAll(".courtGroup g.player-group");
-
-    async function animate(startStep) {
-      let index = startStep;
-      if (
-        !newPlayerData ||
-        newPlayerData.length === 0 ||
-        !newPlayerData[0][T_type]
-      )
-        return;
-
-      while (isPlayingRef.current) {
-        if (index >= newPlayerData[0][T_type].length) {
-          setIsPlaying(false);
-          setCurrentStep(1);
-          break;
+    const frameCount = newPlayerData[0][T_type].length;
+    const intervalId = window.setInterval(() => {
+      setCurrentStep((step) => {
+        if (step >= frameCount - 1) {
+          setIsPlaying?.(false);
+          return step;
         }
 
-        await new Promise((resolve) => {
-          groups
-            .transition()
-            .duration(200)
-            .ease(d3.easeLinear)
-            .attr("transform", (d) => {
-              if (index < d[T_type].length) {
-                return `translate(${(d[T_type][index][0] * width) / 94}, ${(d[T_type][index][1] * width) / 94})`;
-              }
-              return null;
-            })
-            .on("end", resolve);
+        return step + 1;
+      });
+    }, frameDurationMs);
 
-          if (qPlayer && qPlayer[index]) {
-            qPlayer[index].forEach((pActions, pIdx) => {
-              const pGroup = d3.select(`.player-idx-${pIdx + 1}`);
-              const realAction = realPlayerActions?.[index]?.[pIdx];
-              const isStayAction = realAction === 0;
+    return () => window.clearInterval(intervalId);
+  }, [
+    isPlaying,
+    newPlayerData,
+    T_type,
+    setCurrentStep,
+    setIsPlaying,
+  ]);
 
-              pGroup
-                .select(".player-base-circle")
-                .style("stroke", isStayAction ? "#FF0000" : "#ffffff")
-                .style("stroke-width", isStayAction ? 4 : 2);
-
-              pActions.forEach((val, actionId) => {
-                const isRealAction = realPlayerActions && 
-                                   realPlayerActions[index] && 
-                                   realPlayerActions[index][pIdx] === actionId;
-                
-                pGroup
-                  .select(`.q-arc-${actionId}`)
-                  .style("fill", qColorScale(val))
-                  .style("stroke", isRealAction ? "#FF0000" : "#000") // 红色边框标示真实动作
-                  .style("stroke-width", isRealAction ? 3 : 0.3);
-              });
-            });
-          }
-          if (qPlayer && qPlayer[index]) {
-            qPlayer[index].forEach((pActions, pIdx) => {
-              const pGroup = d3.select(`.player-idx-${pIdx + 1}`);
-              const q0 = pActions?.[0];
-              if (q0 != null) {
-                pGroup
-                  .select(".player-base-circle")
-                  .style("fill", qColorScale(q0))
-                  .style("opacity", 0.95);
-              }
-            });
-          }
-        });
-        index++;
-        setCurrentStep(index);
-      }
-    }
-    animate(currentStep);
-  }, [isPlaying, currentStep, newPlayerData, T_type, width, qPlayer, qBall, realPlayerActions]);
-
-  // --- Seek update (when not playing) ---
+  // --- Frame render update ---
   useEffect(() => {
-    if (isPlaying) return;
     if (!newPlayerData || newPlayerData.length === 0) return;
     if (!newPlayerData[0][T_type]) return;
 
@@ -267,14 +217,19 @@ const DrawPlayerVisualization = ({
       .select(courtSVG.current)
       .selectAll(".courtGroup g.player-group");
 
-    groups.attr("transform", (d) => {
-      if (currentStep < d[T_type].length) {
-        return `translate(${(d[T_type][currentStep][0] * width) / 94}, ${(d[T_type][currentStep][1] * width) / 94})`;
-      }
-      return null;
-    });
+    groups
+      .interrupt()
+      .transition()
+      .duration(isPlaying ? frameDurationMs : 0)
+      .ease(d3.easeLinear)
+      .attr("transform", (d) => {
+        if (currentStep < d[T_type].length) {
+          return `translate(${(d[T_type][currentStep][0] * width) / 94}, ${(d[T_type][currentStep][1] * width) / 94})`;
+        }
+        return null;
+      });
 
-    if (qPlayer && qPlayer[currentStep]) {
+    if (showActionValues && qPlayer && qPlayer[currentStep]) {
       qPlayer[currentStep].forEach((pActions, pIdx) => {
         const pGroup = d3.select(`.player-idx-${pIdx + 1}`);
         const realAction = realPlayerActions?.[currentStep]?.[pIdx];
@@ -307,7 +262,7 @@ const DrawPlayerVisualization = ({
         }
       });
     }
-  }, [isPlaying, currentStep, newPlayerData, T_type, width, qPlayer, realPlayerActions]);
+  }, [isPlaying, currentStep, newPlayerData, T_type, width, qPlayer, realPlayerActions, showActionValues, qColorScale]);
 
   return <g ref={courtSVG} className="playerLayer" />;
 };
@@ -316,21 +271,13 @@ export const DrawPlayers = ({
   width, 
   playerData, 
   qPlayer, 
-  qBall,
   currentStep = 0,
   setCurrentStep,
   isPlaying = false,
   setIsPlaying,
-  realPlayerActions
+  realPlayerActions,
+  showActionValues = true,
 }) => {
-  const [newPlayerData, setNewPlayerData] = useState([]);
-
-  useEffect(() => {
-    if (playerData.length > 0) {
-      setNewPlayerData(playerData);
-    }
-  }, [playerData]);
-
   const logicalLength = width;
   const logicalWidth = (width * 50) / 94;
 
@@ -347,14 +294,15 @@ export const DrawPlayers = ({
           <BasketballCourt width={logicalLength} />
           <DrawPlayerVisualization
             width={logicalLength}
-            playerData={newPlayerData}
+            playerData={playerData}
             T_type="real_T"
             isPlaying={isPlaying}
             currentStep={currentStep}
             setCurrentStep={setCurrentStep}
+            setIsPlaying={setIsPlaying}
             qPlayer={qPlayer}
-            qBall={qBall}
             realPlayerActions={realPlayerActions}
+            showActionValues={showActionValues}
           />
         </g>
     </svg>

@@ -323,6 +323,11 @@ const ValueChart = ({
   totalFrames = 0,
   qBall,
   contributionData,
+  showEPVCurve = true,
+  showActionValues = true,
+  showPlayerContributions = true,
+  compact = false,
+  showControls = true,
 }) => {
   const [isDragging, setIsDragging] = useState(false);
   const [isHovering, setIsHovering] = useState(false);
@@ -400,15 +405,7 @@ const ValueChart = ({
     setHoverIndex(null);
   };
 
-  const handlePlayPause = () => setIsPlaying?.(!isPlaying);
-
-  const handleRestart = () => {
-    setIsPlaying?.(false);
-    setCurrentStep?.(0);
-    setTimeout(() => setIsPlaying?.(true), 120);
-  };
-
-  if (!cleanValues.length) {
+  if (showEPVCurve && !cleanValues.length) {
     return (
       <Box
         sx={{
@@ -425,110 +422,127 @@ const ValueChart = ({
   }
 
   return (
-    <Stack spacing={1.5}>
-      <Stack
-        direction="row"
-        alignItems="center"
-        justifyContent="space-between"
-        sx={{
-          px: 1,
-          py: 0.5,
-          border: `1px solid ${panelBorder}`,
-          borderRadius: 2,
-          bgcolor: "#ffffff",
-          boxShadow: "0 6px 20px rgba(15, 23, 42, 0.05)",
-        }}
-      >
-        <Stack direction="row" spacing={1} alignItems="center">
-          <IconButton onClick={handlePlayPause} color="primary" size="large" aria-label="play-pause">
-            {isPlaying ? (
-              <PauseCircleOutlineRoundedIcon fontSize="large" />
-            ) : (
-              <PlayCircleOutlineRoundedIcon fontSize="large" />
-            )}
-          </IconButton>
-          <IconButton onClick={handleRestart} color="primary" size="large" aria-label="restart">
-            <RestartAltRoundedIcon fontSize="large" />
-          </IconButton>
+    <Stack spacing={compact ? 1 : 1.5}>
+      {showControls && (
+        <Stack
+          direction="row"
+          alignItems="center"
+          justifyContent="space-between"
+          sx={{
+            px: compact ? 0.75 : 1,
+            py: compact ? 0.25 : 0.5,
+            border: `1px solid ${panelBorder}`,
+            borderRadius: 2,
+            bgcolor: "#ffffff",
+            boxShadow: "0 6px 20px rgba(15, 23, 42, 0.05)",
+          }}
+        >
+          <Stack direction="row" spacing={1} alignItems="center">
+            <IconButton onClick={() => setIsPlaying?.(!isPlaying)} color="primary" size="large" aria-label="play-pause">
+              {isPlaying ? (
+                <PauseCircleOutlineRoundedIcon fontSize="large" />
+              ) : (
+                <PlayCircleOutlineRoundedIcon fontSize="large" />
+              )}
+            </IconButton>
+            <IconButton
+              onClick={() => {
+                setIsPlaying?.(false);
+                setCurrentStep?.(0);
+                setTimeout(() => setIsPlaying?.(true), 120);
+              }}
+              color="primary"
+              size="large"
+              aria-label="restart"
+            >
+              <RestartAltRoundedIcon fontSize="large" />
+            </IconButton>
+          </Stack>
+
+          <Chip
+            size="small"
+            color="primary"
+            variant="outlined"
+            label={`Frame ${Math.min(currentStep + 1, totalFrames)}/${totalFrames}`}
+            sx={{ fontWeight: 700, bgcolor: "#f8fbff" }}
+          />
         </Stack>
+      )}
 
-        <Chip
-          size="small"
-          color="primary"
-          variant="outlined"
-          label={`Frame ${Math.min(currentStep + 1, totalFrames)}/${totalFrames}`}
-          sx={{ fontWeight: 700, bgcolor: "#f8fbff" }}
-        />
-      </Stack>
+      {showEPVCurve && (
+        <Box
+          sx={{
+            border: `1px solid ${panelBorder}`,
+            borderRadius: 2,
+            bgcolor: panelBg,
+            boxShadow: "0 8px 24px rgba(15, 23, 42, 0.06)",
+            overflowX: "auto",
+          }}
+        >
+          <TimelineChart
+            values={cleanValues}
+            width={width}
+          height={compact ? 178 : 220}
+            currentStep={currentStep}
+            setCurrentStep={setCurrentStep}
+            isHovering={isHovering}
+            hoverIndex={hoverIndex}
+            onChartMouseDown={handleChartMouseDown}
+            onChartMouseMove={handleChartMouseMove}
+            onChartMouseUp={handleChartMouseUp}
+            onChartMouseLeave={handleChartMouseLeave}
+          />
+        </Box>
+      )}
 
-      <Box
-        sx={{
-          border: `1px solid ${panelBorder}`,
-          borderRadius: 2,
-          bgcolor: panelBg,
-          boxShadow: "0 8px 24px rgba(15, 23, 42, 0.06)",
-          overflowX: "auto",
-        }}
-      >
-        <TimelineChart
-          values={cleanValues}
-          width={width}
-          height={220}
-          currentStep={currentStep}
-          setCurrentStep={setCurrentStep}
-          isHovering={isHovering}
-          hoverIndex={hoverIndex}
-          onChartMouseDown={handleChartMouseDown}
-          onChartMouseMove={handleChartMouseMove}
-          onChartMouseUp={handleChartMouseUp}
-          onChartMouseLeave={handleChartMouseLeave}
-        />
-      </Box>
+      {showActionValues && (
+        <Box
+          sx={{
+            border: `1px solid ${panelBorder}`,
+            borderRadius: 2,
+            bgcolor: panelBg,
+            boxShadow: "0 8px 24px rgba(15, 23, 42, 0.06)",
+            overflowX: "auto",
+          }}
+        >
+          <BarChart
+            title="Q_ball"
+            data={currentQBall}
+            width={width}
+          height={compact ? 178 : 210}
+            labels={currentQBall.map((_, i) => qBallActionLabels[i] ?? `Pass ${i}`)}
+            positiveColor="#0f766e"
+            negativeColor="#be123c"
+            valueDigits={2}
+          />
+        </Box>
+      )}
 
-      <Box
-        sx={{
-          border: `1px solid ${panelBorder}`,
-          borderRadius: 2,
-          bgcolor: panelBg,
-          boxShadow: "0 8px 24px rgba(15, 23, 42, 0.06)",
-          overflowX: "auto",
-        }}
-      >
-        <BarChart
-          title="Q_ball"
-          data={currentQBall}
-          width={width}
-          height={210}
-          labels={currentQBall.map((_, i) => qBallActionLabels[i] ?? `Pass ${i}`)}
-          positiveColor="#0f766e"
-          negativeColor="#be123c"
-          valueDigits={2}
-        />
-      </Box>
-
-      <Box
-        sx={{
-          border: `1px solid ${panelBorder}`,
-          borderRadius: 2,
-          bgcolor: panelBg,
-          boxShadow: "0 8px 24px rgba(15, 23, 42, 0.06)",
-          overflowX: "auto",
-        }}
-      >
-        <BarChart
-          title={`EPV Contribution (Frame ${currentStep + 1})`}
-          data={currentContribution}
-          width={width}
-          height={200}
-          labels={currentContribution.map((_, i) => {
-            if (i === currentContribution.length - 1) return "Defense";
-            return i === 0 ? "Ball" : `P${i}`;
-          })}
-          positiveColor="#2563eb"
-          negativeColor="#e11d48"
-          valueDigits={3}
-        />
-      </Box>
+      {showPlayerContributions && (
+        <Box
+          sx={{
+            border: `1px solid ${panelBorder}`,
+            borderRadius: 2,
+            bgcolor: panelBg,
+            boxShadow: "0 8px 24px rgba(15, 23, 42, 0.06)",
+            overflowX: "auto",
+          }}
+        >
+          <BarChart
+            title={`EPV Contribution (Frame ${currentStep + 1})`}
+            data={currentContribution}
+            width={width}
+          height={compact ? 172 : 200}
+            labels={currentContribution.map((_, i) => {
+              if (i === currentContribution.length - 1) return "Defense";
+              return i === 0 ? "Ball" : `P${i}`;
+            })}
+            positiveColor="#2563eb"
+            negativeColor="#e11d48"
+            valueDigits={3}
+          />
+        </Box>
+      )}
     </Stack>
   );
 };

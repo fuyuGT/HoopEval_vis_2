@@ -12,6 +12,7 @@ export const BasketballCourt = ({
         const courtWidth = width;
         const courtHeight = courtWidth / 94 * 50
 
+        select(courtSVG.current).selectAll("*").remove()
 
         const courtItem = select(courtSVG.current)
             .append('g')
@@ -28,7 +29,7 @@ export const BasketballCourt = ({
             .attr('height', courtHeight)
             .attr('transform', 'translate(' + (-courtWidth/4) + ',' + 0 + ')')
 
-    }, [])
+    }, [width])
 
     return (
         <g ref={courtSVG} className='NBAcourt' />
