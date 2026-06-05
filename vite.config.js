@@ -1,5 +1,6 @@
 import fs from "node:fs";
 import path from "node:path";
+import process from "node:process";
 import { fileURLToPath } from "node:url";
 import { defineConfig } from "vite";
 import react from "@vitejs/plugin-react";
@@ -55,6 +56,6 @@ function hoopEvalDataFilesPlugin() {
 }
 
 export default defineConfig({
-  base: "/HoopEval_vis_2/",
+  base: process.env.VITE_BASE_PATH || "/HoopEval_vis_2/",
   plugins: [react(), hoopEvalDataFilesPlugin()],
 });
