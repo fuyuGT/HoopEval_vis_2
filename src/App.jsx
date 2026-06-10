@@ -208,6 +208,25 @@ const getBrowserMetadata = () => ({
 
 const buildDataUrl = (fileName) => `${import.meta.env.BASE_URL}data/${encodeURIComponent(fileName)}`;
 
+const ThinkAloudPrompt = ({ children }) => (
+  <Paper
+    elevation={0}
+    sx={{
+      p: 1.1,
+      border: "1px dashed",
+      borderColor: "divider",
+      bgcolor: alpha("#0f4c81", 0.04),
+    }}
+  >
+    <Stack direction="row" spacing={1} alignItems="flex-start">
+      <InfoOutlinedIcon fontSize="small" color="primary" sx={{ mt: 0.1 }} />
+      <Typography variant="body2" color="text.secondary">
+        {children}
+      </Typography>
+    </Stack>
+  </Paper>
+);
+
 const buildEmptyTrial = (sequenceId, isPractice) => ({
   sequenceId,
   isPractice,
@@ -852,10 +871,8 @@ function App() {
   const phaseAComplete =
     phaseA.independentActionRanking.filter(Boolean).length === currentSequence?.candidateActions.length &&
     new Set(phaseA.independentActionRanking).size === currentSequence?.candidateActions.length &&
-    phaseA.independentActionRationale.trim() &&
     phaseA.independentPlayerRanking.filter(Boolean).length === currentSequence?.playerLabels.length &&
-    new Set(phaseA.independentPlayerRanking).size === currentSequence?.playerLabels.length &&
-    phaseA.playerContributionRationale.trim();
+    new Set(phaseA.independentPlayerRanking).size === currentSequence?.playerLabels.length;
 
   const submitPhaseA = () => {
     const revealTime = nowIso();
@@ -879,8 +896,7 @@ function App() {
 
   const phaseBComplete =
     phaseB.epvAlignment &&
-    phaseB.explanationUsefulness &&
-    phaseB.disagreementExplanation.trim();
+    phaseB.explanationUsefulness;
 
   const submitPhaseB = () => {
     const completedAt = nowIso();
@@ -1274,23 +1290,16 @@ function App() {
                   value={phaseA.independentActionRanking}
                   onChange={(value) => setPhaseA({ ...phaseA, independentActionRanking: value })}
                 />
-                <TextField
-                  label="Please briefly explain the reasoning behind your top choice."
-                  value={phaseA.independentActionRationale}
-                  onChange={(event) => setPhaseA({ ...phaseA, independentActionRationale: event.target.value })}
-                  multiline
-                  minRows={3}
-                  required
-                  size="small"
-                />
+                <ThinkAloudPrompt>
+                  Please think aloud about why you ranked the top action first.
+                </ThinkAloudPrompt>
                 <Button
                   variant="contained"
                   onClick={() => setTrialQuestionStep(1)}
                   disabled={
                     !isAdmin &&
                     (phaseA.independentActionRanking.filter(Boolean).length !== currentSequence.candidateActions.length ||
-                      new Set(phaseA.independentActionRanking).size !== currentSequence.candidateActions.length ||
-                      !phaseA.independentActionRationale.trim())
+                      new Set(phaseA.independentActionRanking).size !== currentSequence.candidateActions.length)
                   }
                 >
                   Next Question
@@ -1307,15 +1316,9 @@ function App() {
                   value={phaseA.independentPlayerRanking}
                   onChange={(value) => setPhaseA({ ...phaseA, independentPlayerRanking: value })}
                 />
-                <TextField
-                  label="Why did your top-ranked player contribute most?"
-                  value={phaseA.playerContributionRationale}
-                  onChange={(event) => setPhaseA({ ...phaseA, playerContributionRationale: event.target.value })}
-                  multiline
-                  minRows={3}
-                  required
-                  size="small"
-                />
+                <ThinkAloudPrompt>
+                  Please think aloud about why your top-ranked player contributed most.
+                </ThinkAloudPrompt>
                 <Stack direction="row" spacing={1}>
                   <Button variant="outlined" onClick={() => setTrialQuestionStep(0)}>
                     Back
@@ -1342,25 +1345,13 @@ function App() {
             {trialQuestionStep === 0 ? (
               <>
                 <LikertSelect label="EPV match" value={phaseB.epvAlignment} onChange={(value) => setPhaseB({ ...phaseB, epvAlignment: value })} required />
-                <TextField
-                  label="Please explain any moments where the EPV trend did not match your tactical expectations."
-                  value={phaseB.disagreementExplanation}
-                  onChange={(event) => setPhaseB({ ...phaseB, disagreementExplanation: event.target.value })}
-                  multiline
-                  minRows={4}
-                  required
-                  size="small"
-                />
-                <TextField
-                  label="Optional timestamp or moment note"
-                  value={phaseB.disagreementMoment}
-                  onChange={(event) => setPhaseB({ ...phaseB, disagreementMoment: event.target.value })}
-                  size="small"
-                />
+                <ThinkAloudPrompt>
+                  Please think aloud about any moments where the EPV trend did or did not match your tactical expectations.
+                </ThinkAloudPrompt>
                 <Button
                   variant="contained"
                   onClick={() => setTrialQuestionStep(1)}
-                  disabled={!isAdmin && (!phaseB.epvAlignment || !phaseB.disagreementExplanation.trim())}
+                  disabled={!isAdmin && !phaseB.epvAlignment}
                 >
                   Next Question
                 </Button>
@@ -1466,7 +1457,7 @@ function App() {
                   <Checkbox
                     size="small"
                     checked={postStudy.likelyUseCases.includes(useCase)}
-                    onChange={() => togglePostStudyUseCase(useCase)}
+            onChange={() => togglePostStudyUseCase(useCase)}
                   />
                 }
                 label={useCase}
@@ -1474,14 +1465,11 @@ function App() {
             ))}
           </Box>
         </Box>
-        <TextField
-          label="Use case explanation"
-          value={postStudy.useCaseExplanation}
-          onChange={(event) => setPostStudy({ ...postStudy, useCaseExplanation: event.target.value })}
-          multiline
-          minRows={3}
-          sx={{ gridColumn: { md: "1 / -1" } }}
-        />
+        <Box sx={{ gridColumn: { md: "1 / -1" } }}>
+          <ThinkAloudPrompt>
+            Please think aloud about why those coaching situations fit best.
+          </ThinkAloudPrompt>
+        </Box>
       </Box>
       <Button
         sx={{ mt: 2 }}
