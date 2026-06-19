@@ -1,0 +1,22 @@
+services:
+  - type: web
+    name: hoopeval-study
+    runtime: node
+    buildCommand: npm install && npm run build
+    startCommand: npm start
+    envVars:
+      - key: NODE_VERSION
+        value: 22
+      - key: BASE_PATH
+        value: /HoopEval_vis_2
+      - key: ADMIN_API_TOKEN
+        generateValue: true
+      - key: DATABASE_URL
+        fromDatabase:
+          name: hoopeval-study-db
+          property: connectionString
+
+databases:
+  - name: hoopeval-study-db
+    databaseName: hoopeval
+    user: hoopeval

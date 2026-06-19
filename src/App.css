@@ -6,3 +6,33 @@
 .App {
   width: 100%;
 }
+
+@keyframes hoopevalButtonCue {
+  0% {
+    opacity: 0.48;
+    transform: scale(1);
+  }
+  70% {
+    opacity: 0;
+    transform: scale(1.055, 1.22);
+  }
+  100% {
+    opacity: 0;
+    transform: scale(1.055, 1.22);
+  }
+}
+
+.guided-action-button {
+  position: relative;
+  overflow: visible;
+}
+
+.guided-action-button:not(.Mui-disabled)::after {
+  content: "";
+  position: absolute;
+  inset: -5px;
+  border: 2px solid rgba(15, 76, 129, 0.42);
+  border-radius: 8px;
+  pointer-events: none;
+  animation: hoopevalButtonCue 1.8s ease-out infinite;
+}

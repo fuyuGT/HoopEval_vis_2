@@ -12,6 +12,19 @@ const panelBorder = "#d1dbe8";
 const chartTitleColor = "#0f172a";
 const qBallActionLabels = ["Shoot", "Pass 1", "Pass 2", "Pass 3", "Pass 4", "Pass 5"];
 
+const getOutputPanelSx = (isHighlighted, hasAnyHighlight) => ({
+  border: "2px solid",
+  borderColor: isHighlighted ? "#e76f51" : panelBorder,
+  borderRadius: 2,
+  bgcolor: isHighlighted ? "#fff7ed" : panelBg,
+  boxShadow: isHighlighted
+    ? "0 0 0 3px rgba(231, 111, 81, 0.16), 0 12px 28px rgba(15, 23, 42, 0.12)"
+    : "0 8px 24px rgba(15, 23, 42, 0.06)",
+  opacity: hasAnyHighlight && !isHighlighted ? 0.62 : 1,
+  overflowX: "auto",
+  transition: "border-color 160ms ease, box-shadow 160ms ease, opacity 160ms ease, background-color 160ms ease",
+});
+
 const TimelineChart = ({
   values,
   width,
@@ -320,12 +333,15 @@ const ValueChart = ({
   setCurrentStep,
   isPlaying = false,
   setIsPlaying,
+  playbackEndStep,
+  onPlayPause,
   totalFrames = 0,
   qBall,
   contributionData,
   showEPVCurve = true,
   showActionValues = true,
   showPlayerContributions = true,
+  highlightedOutputs = [],
   compact = false,
   showControls = true,
 }) => {
@@ -336,7 +352,7 @@ const ValueChart = ({
   useEffect(() => {
     const onKeyDown = (event) => {
       const isSpace = event.code === "Space" || event.key === " ";
-      if (!isSpace || event.repeat || !setIsPlaying) return;
+      if (!isSpace || event.repeat || (!setIsPlaying && !onPlayPause)) return;
 
       const target = event.target;
       if (target instanceof HTMLElement) {
@@ -351,12 +367,22 @@ const ValueChart = ({
       }
 
       event.preventDefault();
-      setIsPlaying((prev) => !prev);
+      if (onPlayPause) {
+        onPlayPause();
+        return;
+      }
+      setIsPlaying((prev) => {
+        const isAtEnd = Number.isInteger(playbackEndStep) && currentStep >= playbackEndStep;
+        if (!prev && isAtEnd) {
+          setCurrentStep?.(0);
+        }
+        return !prev;
+      });
     };
 
     window.addEventListener("keydown", onKeyDown);
     return () => window.removeEventListener("keydown", onKeyDown);
-  }, [setIsPlaying]);
+  }, [currentStep, onPlayPause, playbackEndStep, setCurrentStep, setIsPlaying]);
 
   const cleanValues = useMemo(() => {
     if (!values?.length) return [];
@@ -368,6 +394,11 @@ const ValueChart = ({
     () => contributionData?.[currentStep] ?? [],
     [contributionData, currentStep],
   );
+  const highlightedOutputSet = useMemo(
+    () => new Set(highlightedOutputs),
+    [highlightedOutputs],
+  );
+  const hasAnyHighlight = highlightedOutputSet.size > 0;
 
   const syncFrameFromPointer = (event, xScale, margin, length) => {
     if (!setCurrentStep || !length) return;
@@ -438,7 +469,24 @@ const ValueChart = ({
           }}
         >
           <Stack direction="row" spacing={1} alignItems="center">
-            <IconButton onClick={() => setIsPlaying?.(!isPlaying)} color="primary" size="large" aria-label="play-pause">
+            <IconButton
+              onClick={() => {
+                if (onPlayPause) {
+                  onPlayPause();
+                  return;
+                }
+                setIsPlaying?.((prev) => {
+                  const isAtEnd = Number.isInteger(playbackEndStep) && currentStep >= playbackEndStep;
+                  if (!prev && isAtEnd) {
+                    setCurrentStep?.(0);
+                  }
+                  return !prev;
+                });
+              }}
+              color="primary"
+              size="large"
+              aria-label="play-pause"
+            >
               {isPlaying ? (
                 <PauseCircleOutlineRoundedIcon fontSize="large" />
               ) : (
@@ -447,9 +495,8 @@ const ValueChart = ({
             </IconButton>
             <IconButton
               onClick={() => {
-                setIsPlaying?.(false);
                 setCurrentStep?.(0);
-                setTimeout(() => setIsPlaying?.(true), 120);
+                setIsPlaying?.(true);
               }}
               color="primary"
               size="large"
@@ -471,13 +518,7 @@ const ValueChart = ({
 
       {showEPVCurve && (
         <Box
-          sx={{
-            border: `1px solid ${panelBorder}`,
-            borderRadius: 2,
-            bgcolor: panelBg,
-            boxShadow: "0 8px 24px rgba(15, 23, 42, 0.06)",
-            overflowX: "auto",
-          }}
+          sx={getOutputPanelSx(highlightedOutputSet.has("epv"), hasAnyHighlight)}
         >
           <TimelineChart
             values={cleanValues}
@@ -497,13 +538,7 @@ const ValueChart = ({
 
       {showActionValues && (
         <Box
-          sx={{
-            border: `1px solid ${panelBorder}`,
-            borderRadius: 2,
-            bgcolor: panelBg,
-            boxShadow: "0 8px 24px rgba(15, 23, 42, 0.06)",
-            overflowX: "auto",
-          }}
+          sx={getOutputPanelSx(highlightedOutputSet.has("actions"), hasAnyHighlight)}
         >
           <BarChart
             title="Q_ball"
@@ -520,13 +555,7 @@ const ValueChart = ({
 
       {showPlayerContributions && (
         <Box
-          sx={{
-            border: `1px solid ${panelBorder}`,
-            borderRadius: 2,
-            bgcolor: panelBg,
-            boxShadow: "0 8px 24px rgba(15, 23, 42, 0.06)",
-            overflowX: "auto",
-          }}
+          sx={getOutputPanelSx(highlightedOutputSet.has("contributions"), hasAnyHighlight)}
         >
           <BarChart
             title={`EPV Contribution (Frame ${currentStep + 1})`}

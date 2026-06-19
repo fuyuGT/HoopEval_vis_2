@@ -12,6 +12,7 @@ const DrawPlayerVisualization = ({
   currentStep,
   setCurrentStep,
   setIsPlaying,
+  playbackStopStep,
   qPlayer,
   realPlayerActions, // 添加真实动作数据
   showActionValues = true,
@@ -177,9 +178,10 @@ const DrawPlayerVisualization = ({
           .style("pointer-events", "none")
           .text(i); // 显示索引号（1-5）
       }
-      
-      if (d.agent_id === -1) group.raise();
     });
+
+    courtItem.selectAll("g.player-group").filter((_, i) => i >= 1 && i <= 5).raise();
+    courtItem.selectAll("g.player-group").filter((d) => d.agent_id === -1).raise();
   }, [playerData, width, T_type, showActionValues, arcGenerator]);
 
   // --- Linear playback clock ---
@@ -188,9 +190,13 @@ const DrawPlayerVisualization = ({
     if (!newPlayerData?.length || !newPlayerData[0]?.[T_type]?.length) return;
 
     const frameCount = newPlayerData[0][T_type].length;
+    const lastStep = Math.min(
+      frameCount - 1,
+      Number.isInteger(playbackStopStep) ? playbackStopStep : frameCount - 1,
+    );
     const intervalId = window.setInterval(() => {
       setCurrentStep((step) => {
-        if (step >= frameCount - 1) {
+        if (step >= lastStep) {
           setIsPlaying?.(false);
           return step;
         }
@@ -206,6 +212,7 @@ const DrawPlayerVisualization = ({
     T_type,
     setCurrentStep,
     setIsPlaying,
+    playbackStopStep,
   ]);
 
   // --- Frame render update ---
@@ -275,6 +282,7 @@ export const DrawPlayers = ({
   setCurrentStep,
   isPlaying = false,
   setIsPlaying,
+  playbackStopStep,
   realPlayerActions,
   showActionValues = true,
 }) => {
@@ -286,8 +294,10 @@ export const DrawPlayers = ({
 
   return (
     <svg
-      width={svgWidth}
-      height={svgHeight}
+      width="100%"
+      height="100%"
+      viewBox={`0 0 ${svgWidth} ${svgHeight}`}
+      preserveAspectRatio="xMidYMid meet"
       style={{ border: "none", display: "block", backgroundColor: "#ffffff" }}
     >
         <g transform={`translate(0, ${svgHeight}) rotate(-90)`}>
@@ -300,6 +310,7 @@ export const DrawPlayers = ({
             currentStep={currentStep}
             setCurrentStep={setCurrentStep}
             setIsPlaying={setIsPlaying}
+            playbackStopStep={playbackStopStep}
             qPlayer={qPlayer}
             realPlayerActions={realPlayerActions}
             showActionValues={showActionValues}
