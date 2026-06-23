@@ -12,6 +12,25 @@ const panelBorder = "#d1dbe8";
 const chartTitleColor = "#0f172a";
 const qBallActionLabels = ["Shoot", "Pass 1", "Pass 2", "Pass 3", "Pass 4", "Pass 5"];
 
+const wrapTitle = (title, maxChars = 44) => {
+  const words = String(title).split(" ");
+  const lines = [];
+  let currentLine = "";
+
+  words.forEach((word) => {
+    const nextLine = currentLine ? `${currentLine} ${word}` : word;
+    if (nextLine.length > maxChars && currentLine) {
+      lines.push(currentLine);
+      currentLine = word;
+      return;
+    }
+    currentLine = nextLine;
+  });
+
+  if (currentLine) lines.push(currentLine);
+  return lines.slice(0, 2);
+};
+
 const getOutputPanelSx = (isHighlighted, hasAnyHighlight) => ({
   border: "2px solid",
   borderColor: isHighlighted ? "#e76f51" : panelBorder,
@@ -233,7 +252,8 @@ const BarChart = ({
   useEffect(() => {
     if (!ref.current || !data?.length) return;
 
-    const margin = { top: 24, right: 14, bottom: 36, left: 42 };
+    const titleLines = wrapTitle(title, width < 440 ? 34 : 48);
+    const margin = { top: titleLines.length > 1 ? 38 : 24, right: 14, bottom: 36, left: 42 };
     const svg = d3.select(ref.current);
     svg.selectAll("*").remove();
 
@@ -314,13 +334,20 @@ const BarChart = ({
       .style("font-size", "9px")
       .text((d) => d.toFixed(valueDigits));
 
-    g.append("text")
+    const titleNode = g.append("text")
       .attr("x", margin.left)
       .attr("y", 16)
       .attr("fill", chartTitleColor)
       .style("font-size", "12px")
-      .style("font-weight", 700)
-      .text(title);
+      .style("font-weight", 700);
+
+    titleLines.forEach((line, index) => {
+      titleNode
+        .append("tspan")
+        .attr("x", margin.left)
+        .attr("dy", index === 0 ? 0 : 14)
+        .text(line);
+    });
   }, [title, data, width, height, labels, valueDigits, positiveColor, negativeColor, neutralColor]);
 
   return <svg ref={ref} width={width} height={height} style={{ display: "block" }} />;
@@ -541,7 +568,7 @@ const ValueChart = ({
           sx={getOutputPanelSx(highlightedOutputSet.has("actions"), hasAnyHighlight)}
         >
           <BarChart
-            title="Q_ball"
+            title="Value of ball action"
             data={currentQBall}
             width={width}
           height={compact ? 178 : 210}
@@ -558,7 +585,7 @@ const ValueChart = ({
           sx={getOutputPanelSx(highlightedOutputSet.has("contributions"), hasAnyHighlight)}
         >
           <BarChart
-            title={`EPV Contribution (Frame ${currentStep + 1})`}
+            title={`Contribution of Player Actions to Expected Possession Value (Frame ${currentStep + 1})`}
             data={currentContribution}
             width={width}
           height={compact ? 172 : 200}

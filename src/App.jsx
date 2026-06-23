@@ -1756,6 +1756,9 @@ function App() {
           description="Rate how well the EPV trend matches your judgment."
         >
           <Stack spacing={1} sx={{ minHeight: "100%" }}>
+            <Typography variant="body2" color="text.secondary" sx={{ lineHeight: 1.45 }}>
+              Expected Possession Value (EPV) estimates the expected number of points the offensive team will score from the current state of a possession.
+            </Typography>
             <LikertSelect
               label="EPV match"
               value={phaseB.epvAlignment}
