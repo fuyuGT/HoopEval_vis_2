@@ -907,6 +907,7 @@ function App() {
   const [interviewNotes, setInterviewNotes] = useState(createEmptyInterviewNotes);
   const [completedSessions, setCompletedSessions] = useState(() => readStudyDatabase());
   const [selectedStatsSessionId, setSelectedStatsSessionId] = useState("");
+  const [selectedBackendSessionIds, setSelectedBackendSessionIds] = useState([]);
   const [databaseStatus, setDatabaseStatus] = useState({
     source: "browser",
     message: "Showing browser-local responses until backend refresh succeeds.",
@@ -1073,6 +1074,7 @@ function App() {
       const { sessions, source } = result;
       writeStudyDatabase(sessions);
       setCompletedSessions(sessions);
+      setSelectedBackendSessionIds([]);
       setDatabaseStatus({
         source,
         message:
@@ -1081,12 +1083,14 @@ function App() {
             : "Backend unavailable. Showing browser-local responses only.",
         error: "",
       });
+      return sessions;
     } catch (error) {
       setDatabaseStatus({
         source: "error",
         message: "Backend database refresh failed. Check the admin token and Render service.",
         error: error.message || "Unknown error",
       });
+      throw error;
     }
   }, [getAdminToken, isAdmin]);
 
@@ -1205,12 +1209,15 @@ function App() {
     const participantSessions = completedSessions.filter((item) => item.participantId?.toLowerCase() !== "admin");
     if (!participantSessions.length) {
       setSelectedStatsSessionId("");
+      setSelectedBackendSessionIds([]);
       return;
     }
 
     if (!participantSessions.some((item) => item.sessionId === selectedStatsSessionId)) {
       setSelectedStatsSessionId(participantSessions[0].sessionId);
     }
+    const validSessionIds = new Set(participantSessions.map((item) => item.sessionId));
+    setSelectedBackendSessionIds((prev) => prev.filter((sessionId) => validSessionIds.has(sessionId)));
   }, [completedSessions, selectedStatsSessionId]);
 
   useEffect(() => {
@@ -1847,20 +1854,49 @@ function App() {
     try {
       const token = getAdminToken();
       await deleteStudySession(selectedStatsSessionId, token);
-      const nextSessions = completedSessions.filter((item) => item.sessionId !== selectedStatsSessionId);
-      writeStudyDatabase(nextSessions);
-      setCompletedSessions(nextSessions);
-      setSelectedStatsSessionId(nextSessions.find((item) => item.participantId?.toLowerCase() !== "admin")?.sessionId || "");
+      const refreshedSessions = await loadCompletedSessions();
+      setSelectedStatsSessionId(refreshedSessions.find((item) => item.participantId?.toLowerCase() !== "admin")?.sessionId || "");
+      setSelectedBackendSessionIds([]);
       setDatabaseStatus({
         source: "backend",
-        message: "Deleted selected backend row.",
+        message: `Deleted selected backend row. Database now has ${refreshedSessions.length} row${refreshedSessions.length === 1 ? "" : "s"}.`,
         error: "",
       });
-      void loadCompletedSessions();
     } catch (error) {
       setDatabaseStatus({
         source: "error",
         message: "Backend delete failed. Check the admin token and backend service.",
+        error: error.message || "Unknown error",
+      });
+    }
+  };
+
+  const deleteSelectedBackendSessions = async () => {
+    const idsToDelete = selectedBackendSessionIds.filter(Boolean);
+    if (!idsToDelete.length) return;
+
+    const confirmed = window.confirm(`Delete ${idsToDelete.length} selected backend row${idsToDelete.length === 1 ? "" : "s"}?`);
+    if (!confirmed) return;
+
+    setDatabaseStatus((prev) => ({ ...prev, message: `Deleting ${idsToDelete.length} selected backend row${idsToDelete.length === 1 ? "" : "s"}...`, error: "" }));
+    try {
+      const token = getAdminToken();
+      for (const sessionId of idsToDelete) {
+        await deleteStudySession(sessionId, token);
+      }
+
+      const refreshedSessions = await loadCompletedSessions();
+      setSelectedBackendSessionIds([]);
+      setSelectedStatsSessionId(refreshedSessions.find((item) => item.participantId?.toLowerCase() !== "admin")?.sessionId || "");
+      setDatabaseStatus({
+        source: "backend",
+        message: `Deleted ${idsToDelete.length} selected backend row${idsToDelete.length === 1 ? "" : "s"}. Database now has ${refreshedSessions.length} row${refreshedSessions.length === 1 ? "" : "s"}.`,
+        error: "",
+      });
+    } catch (error) {
+      setDatabaseStatus({
+        source: "error",
+        message: "Backend delete selected failed. Check the admin token and backend service.",
         error: error.message || "Unknown error",
       });
     }
@@ -1874,12 +1910,12 @@ function App() {
     try {
       const token = getAdminToken();
       await clearStudySessions(token);
-      writeStudyDatabase([]);
-      setCompletedSessions([]);
-      setSelectedStatsSessionId("");
+      const refreshedSessions = await loadCompletedSessions();
+      setSelectedStatsSessionId(refreshedSessions.find((item) => item.participantId?.toLowerCase() !== "admin")?.sessionId || "");
+      setSelectedBackendSessionIds([]);
       setDatabaseStatus({
         source: "backend",
-        message: "Backend database cleared.",
+        message: `Backend database cleared. Database now has ${refreshedSessions.length} row${refreshedSessions.length === 1 ? "" : "s"}.`,
         error: "",
       });
     } catch (error) {
@@ -2510,6 +2546,19 @@ function App() {
     const selectedStatsSession =
       participantSessions.find((item) => item.sessionId === selectedStatsSessionId) || participantSessions[0] || null;
     const selectedTrials = (selectedStatsSession?.trials || []).filter((trial) => !trial.isPractice);
+    const sessionRowIds = participantSessions.map((item) => item.sessionId).filter(Boolean);
+    const selectedBackendSessionIdSet = new Set(selectedBackendSessionIds);
+    const allRowsSelected = sessionRowIds.length > 0 && sessionRowIds.every((sessionId) => selectedBackendSessionIdSet.has(sessionId));
+    const someRowsSelected = selectedBackendSessionIds.length > 0 && !allRowsSelected;
+    const toggleAllBackendRows = (checked) => {
+      setSelectedBackendSessionIds(checked ? sessionRowIds : []);
+    };
+    const toggleBackendRow = (sessionId, checked) => {
+      setSelectedBackendSessionIds((prev) => {
+        if (checked) return prev.includes(sessionId) ? prev : [...prev, sessionId];
+        return prev.filter((item) => item !== sessionId);
+      });
+    };
     const sessionRows = participantSessions.map((item) => {
       const trials = (item.trials || []).filter((trial) => !trial.isPractice);
       return {
@@ -2605,17 +2654,46 @@ function App() {
           <Typography variant="body2" color="text.secondary" sx={{ mb: 1 }}>
             Showing raw backend rows. Select a row to inspect or delete that stored data point.
           </Typography>
+          <Stack direction={{ xs: "column", sm: "row" }} spacing={1} alignItems={{ xs: "stretch", sm: "center" }} sx={{ mb: 1 }}>
+            <FormControlLabel
+              control={
+                <Checkbox
+                  checked={allRowsSelected}
+                  indeterminate={someRowsSelected}
+                  onChange={(event) => toggleAllBackendRows(event.target.checked)}
+                />
+              }
+              label="Select all rows"
+            />
+            <Button
+              variant="outlined"
+              color="error"
+              onClick={deleteSelectedBackendSessions}
+              disabled={!selectedBackendSessionIds.length}
+            >
+              Delete Selected ({selectedBackendSessionIds.length})
+            </Button>
+          </Stack>
           <Paper elevation={0} sx={{ border: "1px solid", borderColor: "divider", overflow: "auto" }}>
             <Box
               sx={{
-                minWidth: 1080,
+                minWidth: 1128,
                 display: "grid",
-                gridTemplateColumns: "120px 88px 165px 165px 80px 110px 130px 130px 115px 115px",
+                gridTemplateColumns: "48px 120px 88px 165px 165px 80px 110px 130px 130px 115px 115px",
                 bgcolor: "grey.100",
                 borderBottom: "1px solid",
                 borderColor: "divider",
               }}
             >
+              <Box sx={{ p: 0.5 }}>
+                <Checkbox
+                  size="small"
+                  checked={allRowsSelected}
+                  indeterminate={someRowsSelected}
+                  onChange={(event) => toggleAllBackendRows(event.target.checked)}
+                  inputProps={{ "aria-label": "select all backend rows" }}
+                />
+              </Box>
               {["Participant", "Done", "Started", "Completed", "Trials", "Avg EPV", "Explanation", "Coaching", "Top action", "Top player"].map((header) => (
                 <Typography key={header} variant="caption" sx={{ p: 1, fontWeight: 800 }}>
                   {header}
@@ -2625,17 +2703,24 @@ function App() {
             {sessionRows.length ? (
               sessionRows.map((row) => {
                 const selected = row.sessionId === selectedStatsSession?.sessionId;
+                const rowChecked = selectedBackendSessionIdSet.has(row.sessionId);
                 return (
                   <Box
                     key={row.sessionId}
-                    component="button"
-                    type="button"
+                    role="button"
+                    tabIndex={0}
                     onClick={() => setSelectedStatsSessionId(row.sessionId)}
+                    onKeyDown={(event) => {
+                      if (event.key === "Enter" || event.key === " ") {
+                        event.preventDefault();
+                        setSelectedStatsSessionId(row.sessionId);
+                      }
+                    }}
                     sx={{
-                      minWidth: 1080,
+                      minWidth: 1128,
                       width: "100%",
                       display: "grid",
-                      gridTemplateColumns: "120px 88px 165px 165px 80px 110px 130px 130px 115px 115px",
+                      gridTemplateColumns: "48px 120px 88px 165px 165px 80px 110px 130px 130px 115px 115px",
                       border: 0,
                       borderBottom: "1px solid",
                       borderColor: "divider",
@@ -2646,6 +2731,17 @@ function App() {
                       "&:hover": { bgcolor: alpha("#0f4c81", 0.05) },
                     }}
                   >
+                    <Box
+                      sx={{ p: 0.5 }}
+                      onClick={(event) => event.stopPropagation()}
+                    >
+                      <Checkbox
+                        size="small"
+                        checked={rowChecked}
+                        onChange={(event) => toggleBackendRow(row.sessionId, event.target.checked)}
+                        inputProps={{ "aria-label": `select backend row ${row.sessionId}` }}
+                      />
+                    </Box>
                     {[
                       row.participantId,
                       row.completed,
