@@ -45,7 +45,7 @@ const allowedOrigin = process.env.CORS_ORIGIN || "*";
 const jsonHeaders = {
   "content-type": "application/json; charset=utf-8",
   "access-control-allow-origin": allowedOrigin,
-  "access-control-allow-methods": "GET,POST,OPTIONS",
+  "access-control-allow-methods": "GET,POST,DELETE,OPTIONS",
   "access-control-allow-headers": "content-type,x-admin-token",
 };
 
@@ -125,18 +125,112 @@ async function readSessions() {
   return result.rows.map((row) => row.session_data);
 }
 
+async function readLatestParticipantSession(participantId) {
+  const normalizedParticipantId = participantId.trim().toLowerCase();
+  if (!normalizedParticipantId || normalizedParticipantId === "admin") return null;
+
+  const sessions = await readSessions();
+  const participantSessions = sessions
+    .filter(
+      (session) =>
+        session.participantId?.trim().toLowerCase() === normalizedParticipantId &&
+        session.participantId?.trim().toLowerCase() !== "admin",
+    )
+    .sort((a, b) => {
+      const aTime = new Date(a.savedAt || a.startTime || 0).getTime();
+      const bTime = new Date(b.savedAt || b.startTime || 0).getTime();
+      return bTime - aTime;
+    });
+
+  return participantSessions.find((session) => !session.endTime) || participantSessions[0] || null;
+}
+
+function normalizeParticipantId(session) {
+  return session.participantId?.trim().toLowerCase() || "";
+}
+
+function sortSessionsNewestFirst(sessions) {
+  return [...sessions].sort((a, b) => {
+    const aTime = new Date(a.savedAt || a.startTime || 0).getTime();
+    const bTime = new Date(b.savedAt || b.startTime || 0).getTime();
+    return bTime - aTime;
+  });
+}
+
+function getLatestUnfinishedParticipantSession(sessions, participantId, excludedSessionId = "") {
+  const normalizedParticipantId = participantId.trim().toLowerCase();
+  if (!normalizedParticipantId || normalizedParticipantId === "admin") return null;
+
+  return (
+    sortSessionsNewestFirst(sessions).find(
+      (session) =>
+        normalizeParticipantId(session) === normalizedParticipantId &&
+        session.sessionId !== excludedSessionId &&
+        !session.endTime,
+    ) || null
+  );
+}
+
+function collapseParticipantSessions(sessions) {
+  const latestByParticipant = new Map();
+  const admins = [];
+
+  sortSessionsNewestFirst(sessions).forEach((session) => {
+    const participantId = normalizeParticipantId(session);
+    if (!participantId) return;
+    if (participantId === "admin") {
+      admins.push(session);
+      return;
+    }
+    if (!latestByParticipant.has(participantId)) {
+      latestByParticipant.set(participantId, session);
+    }
+  });
+
+  return [...latestByParticipant.values(), ...admins].sort((a, b) => {
+    const aTime = new Date(a.startTime || a.savedAt || 0).getTime();
+    const bTime = new Date(b.startTime || b.savedAt || 0).getTime();
+    return aTime - bTime;
+  });
+}
+
 async function saveSession(session) {
   const savedAt = new Date().toISOString();
-  const savedSession = { ...session, savedAt };
 
   if (!pool) {
     const sessions = await readFileSessions();
+    const existingUnfinishedSession = !session.endTime
+      ? getLatestUnfinishedParticipantSession(sessions, session.participantId, session.sessionId)
+      : null;
+    const savedSession = existingUnfinishedSession
+      ? {
+          ...existingUnfinishedSession,
+          ...session,
+          sessionId: existingUnfinishedSession.sessionId,
+          startTime: existingUnfinishedSession.startTime || session.startTime,
+          savedAt,
+        }
+      : { ...session, savedAt };
     const nextSessions = [...sessions.filter((item) => item.sessionId !== savedSession.sessionId), savedSession];
     await writeFileSessions(nextSessions);
     return savedSession;
   }
 
   await ensureSchema();
+  const existingUnfinishedSession = !session.endTime ? await readLatestParticipantSession(session.participantId) : null;
+  const shouldReuseExistingSession =
+    existingUnfinishedSession &&
+    !existingUnfinishedSession.endTime &&
+    existingUnfinishedSession.sessionId !== session.sessionId;
+  const savedSession = shouldReuseExistingSession
+    ? {
+        ...existingUnfinishedSession,
+        ...session,
+        sessionId: existingUnfinishedSession.sessionId,
+        startTime: existingUnfinishedSession.startTime || session.startTime,
+        savedAt,
+      }
+    : { ...session, savedAt };
   await pool.query(
     `
       INSERT INTO study_sessions (
@@ -171,6 +265,33 @@ async function saveSession(session) {
     ],
   );
   return savedSession;
+}
+
+async function deleteSession(sessionId) {
+  if (!sessionId) return false;
+
+  if (!pool) {
+    const sessions = await readFileSessions();
+    const nextSessions = sessions.filter((session) => session.sessionId !== sessionId);
+    if (nextSessions.length === sessions.length) return false;
+    await writeFileSessions(nextSessions);
+    return true;
+  }
+
+  await ensureSchema();
+  const result = await pool.query("DELETE FROM study_sessions WHERE session_id = $1", [sessionId]);
+  return result.rowCount > 0;
+}
+
+async function deleteAllSessions() {
+  if (!pool) {
+    await writeFileSessions([]);
+    return true;
+  }
+
+  await ensureSchema();
+  await pool.query("DELETE FROM study_sessions");
+  return true;
 }
 
 async function readBody(request) {
@@ -226,7 +347,7 @@ function countValues(values) {
 }
 
 function buildStats(sessions) {
-  const participantSessions = sessions.filter((session) => session.participantId?.toLowerCase() !== "admin");
+  const participantSessions = collapseParticipantSessions(sessions).filter((session) => session.participantId?.toLowerCase() !== "admin");
   const completedSessions = participantSessions.filter((session) => session.endTime);
   const trials = participantSessions.flatMap((session) => (session.trials || []).filter((trial) => !trial.isPractice));
 
@@ -271,9 +392,27 @@ async function handleApi(request, response, url) {
     return;
   }
 
+  if (url.pathname === "/api/sessions/latest" && request.method === "GET") {
+    const participantId = url.searchParams.get("participantId") || "";
+    if (!participantId.trim()) {
+      sendJson(response, 400, { error: "participantId is required" });
+      return;
+    }
+
+    sendJson(response, 200, { session: await readLatestParticipantSession(participantId) });
+    return;
+  }
+
   if (url.pathname === "/api/sessions" && request.method === "GET") {
     if (!requireAdmin(request, response)) return;
     sendJson(response, 200, { sessions: await readSessions() });
+    return;
+  }
+
+  if (url.pathname === "/api/sessions" && request.method === "DELETE") {
+    if (!requireAdmin(request, response)) return;
+    await deleteAllSessions();
+    sendJson(response, 200, { ok: true });
     return;
   }
 
@@ -294,6 +433,19 @@ async function handleApi(request, response, url) {
 
     const savedSession = await saveSession(session);
     sendJson(response, 200, { ok: true, session: savedSession });
+    return;
+  }
+
+  if (url.pathname.startsWith("/api/sessions/") && request.method === "DELETE") {
+    if (!requireAdmin(request, response)) return;
+    const sessionId = decodeURIComponent(url.pathname.slice("/api/sessions/".length));
+    if (!sessionId) {
+      sendJson(response, 400, { error: "sessionId is required" });
+      return;
+    }
+
+    const deleted = await deleteSession(sessionId);
+    sendJson(response, deleted ? 200 : 404, deleted ? { ok: true, sessionId } : { error: "Session not found" });
     return;
   }
 

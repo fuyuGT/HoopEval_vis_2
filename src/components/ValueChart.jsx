@@ -360,7 +360,6 @@ const ValueChart = ({
   setCurrentStep,
   isPlaying = false,
   setIsPlaying,
-  playbackEndStep,
   onPlayPause,
   totalFrames = 0,
   qBall,
@@ -399,17 +398,13 @@ const ValueChart = ({
         return;
       }
       setIsPlaying((prev) => {
-        const isAtEnd = Number.isInteger(playbackEndStep) && currentStep >= playbackEndStep;
-        if (!prev && isAtEnd) {
-          setCurrentStep?.(0);
-        }
         return !prev;
       });
     };
 
     window.addEventListener("keydown", onKeyDown);
     return () => window.removeEventListener("keydown", onKeyDown);
-  }, [currentStep, onPlayPause, playbackEndStep, setCurrentStep, setIsPlaying]);
+  }, [onPlayPause, setIsPlaying]);
 
   const cleanValues = useMemo(() => {
     if (!values?.length) return [];
@@ -503,10 +498,6 @@ const ValueChart = ({
                   return;
                 }
                 setIsPlaying?.((prev) => {
-                  const isAtEnd = Number.isInteger(playbackEndStep) && currentStep >= playbackEndStep;
-                  if (!prev && isAtEnd) {
-                    setCurrentStep?.(0);
-                  }
                   return !prev;
                 });
               }}

@@ -52,7 +52,6 @@ const DrawPlayerVisualization = ({
     svg.selectAll("*").remove();
 
     const courtItem = svg.append("g").attr("class", "courtGroup");
-    const playerIMGWidth = width / 20;
 
     const validData = playerData.filter(
       (d) => d[T_type] && d[T_type].length > 0,
@@ -71,15 +70,17 @@ const DrawPlayerVisualization = ({
 
     groups.each(function (d, i) {
       const group = d3.select(this);
-      const radius = d.agent_id === -1 ? width / 120 : width / 60;
+      const radius = d.agent_id === -1 ? width / 145 : width / 72;
+      const ringGap = Math.max(width / 470, 1.2);
+      const ringWidth = Math.max(width / 140, 5);
       const clipPathId = `clip-path-${d.agent_id}-${T_type}`;
 
       if (showActionValues && d.agent_id !== -1 && i > 0 && i <= 5) {
         const actionGroup = group.append("g").attr("class", "player-q-space");
         const rings = [
-          { inner: radius + 2, outer: radius + 12, range: [1, 8] },
-          { inner: radius + 12, outer: radius + 22, range: [9, 16] },
-          { inner: radius + 22, outer: radius + 32, range: [17, 24] },
+          { inner: radius + ringGap, outer: radius + ringGap + ringWidth, range: [1, 8] },
+          { inner: radius + ringGap + ringWidth, outer: radius + ringGap + 2 * ringWidth, range: [9, 16] },
+          { inner: radius + ringGap + 2 * ringWidth, outer: radius + ringGap + 3 * ringWidth, range: [17, 24] },
         ];
 
         rings.forEach((ring) => {
@@ -99,7 +100,8 @@ const DrawPlayerVisualization = ({
               )
               .style("fill", "#333")
               .style("stroke", "#000")
-              .style("stroke-width", 0.3);
+              .style("stroke-width", 0.25)
+              .style("opacity", 0.82);
           }
         });
 
@@ -131,56 +133,53 @@ const DrawPlayerVisualization = ({
         .style("stroke", "#ffffff")
         .style("opacity", 0.9);
 
+      const headshotSize = d.agent_id === -1 ? 2 * radius : 2.75 * radius;
+      const headshotOffsetY = d.agent_id === -1 ? 0 : -0.18 * radius;
       const image = group
         .append("image")
+        .attr("class", "player-headshot")
         .attr(
           "href",
           d.agent_id === -1
             ? ""
             : `https://cdn.nba.com/headshots/nba/latest/1040x760/${d.agent_id}.png`,
         )
-        .attr("width", d.agent_id === -1 ? 2 * radius : playerIMGWidth)
-        .attr("height", d.agent_id === -1 ? 2 * radius : playerIMGWidth)
-        .attr("x", d.agent_id === -1 ? -radius / 2 : -playerIMGWidth / 2)
-        .attr(
-          "y",
-          d.agent_id === -1 ? -radius / 2 + 10 : -playerIMGWidth / 2 + 10,
-        )
-        .style("opacity", 0.7)
+        .attr("width", headshotSize)
+        .attr("height", headshotSize)
+        .attr("x", -headshotSize / 2)
+        .attr("y", -headshotSize / 2 + headshotOffsetY)
+        .style("opacity", d.agent_id === -1 ? 0.95 : 0.88)
         .attr("transform", "rotate(90)");
 
       if (d.agent_id !== -1) image.attr("clip-path", `url(#${clipPathId})`);
       
-      // 为进攻方球员（索引1-5）添加数字标注
-      if (i >= 1 && i <= 5) {
-        // 添加白色圆形背景
-        group
-          .append("circle")
-          .attr("class", "player-number-bg")
-          .attr("cx", 0)
-          .attr("cy", 0)
-          .attr("r", 8)
-          .style("fill", "white")
-          .style("stroke", "#333")
-          .style("stroke-width", "1px");
-        
+      if (d.agent_id !== -1) {
+        const roleLabel = i >= 1 && i <= 5 ? `P${i}` : `D${i - 5}`;
+        const label = d.shortName ? `${roleLabel} (${d.shortName})` : roleLabel;
+        const labelOffset = headshotSize / 2 + Math.max(width / 260, 3);
+        const labelY = i >= 1 && i <= 5 ? -labelOffset : labelOffset;
+
         group
           .append("text")
-          .attr("class", "player-number")
+          .attr("class", "player-name-label")
           .attr("x", 0)
-          .attr("y", 0)
+          .attr("y", labelY)
           .attr("text-anchor", "middle")
           .attr("dominant-baseline", "central")
-          .attr("transform", "rotate(90)")  // 顺时针旋转90度
-          .style("font-size", "12px")
-          .style("font-weight", "bold")
-          .style("fill", "#000")
+          .attr("transform", "rotate(90)")
+          .style("font-size", "9.5px")
+          .style("font-weight", "800")
+          .style("fill", i >= 1 && i <= 5 ? "#0f172a" : "#374151")
+          .style("stroke", "rgba(255,255,255,0.92)")
+          .style("stroke-width", 3)
+          .style("paint-order", "stroke")
           .style("pointer-events", "none")
-          .text(i); // 显示索引号（1-5）
+          .text(label);
       }
     });
 
-    courtItem.selectAll("g.player-group").filter((_, i) => i >= 1 && i <= 5).raise();
+    courtItem.selectAll("g.player-group").filter((_, i) => i > 5).raise();
+    courtItem.selectAll("g.player-group").selectAll(".player-headshot,.player-name-label").raise();
     courtItem.selectAll("g.player-group").filter((d) => d.agent_id === -1).raise();
   }, [playerData, width, T_type, showActionValues, arcGenerator]);
 

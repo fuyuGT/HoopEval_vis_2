@@ -41,6 +41,7 @@ import ShowChartRoundedIcon from "@mui/icons-material/ShowChartRounded";
 import ViewInArRoundedIcon from "@mui/icons-material/ViewInArRounded";
 import MoreHorizRoundedIcon from "@mui/icons-material/MoreHorizRounded";
 import CheckCircleRoundedIcon from "@mui/icons-material/CheckCircleRounded";
+import Papa from "papaparse";
 import { DrawPlayers } from "./components/DrawPlayers";
 import ValueChart from "./components/ValueChart";
 import { studyConfig } from "./studyConfig";
@@ -117,9 +118,88 @@ const interviewSections = [
   "missing basketball context",
 ];
 
+const createEmptyInterviewNotes = () => Object.fromEntries(interviewSections.map((section) => [section, ""]));
+
+const toShortPlayerName = (fullName = "") => {
+  const readableName = fullName.trim().replace(/([a-z])([A-Z])/g, "$1 $2");
+  const parts = readableName.split(/\s+/).filter(Boolean);
+  if (parts.length < 2) return readableName;
+  const lastName = parts.slice(1).join(" ");
+  return `${parts[0][0]}.${lastName}`;
+};
+
+const getFirstPresentValue = (row, keys) => {
+  for (const key of keys) {
+    const value = row[key];
+    if (value != null && String(value).trim()) return String(value).trim();
+  }
+  return "";
+};
+
+const buildPlayerNameMap = (rows) =>
+  rows.reduce((lookup, row) => {
+    const normalizedRow = Object.fromEntries(
+      Object.entries(row || {}).map(([key, value]) => [String(key).trim().toLowerCase(), value]),
+    );
+    const id = getFirstPresentValue(normalizedRow, ["player_id", "playerid", "person_id", "personid", "id"]);
+    const name =
+      getFirstPresentValue(normalizedRow, ["display_first_last", "player_name", "playername", "full_name", "name"]) ||
+      [getFirstPresentValue(normalizedRow, ["first_name", "firstname"]), getFirstPresentValue(normalizedRow, ["last_name", "lastname"])]
+        .filter(Boolean)
+        .join(" ");
+
+    if (id && name) lookup[id] = name;
+    return lookup;
+  }, {});
+
 const nowIso = () => new Date().toISOString();
 const studyDatabaseKey = "hoopevalStudyDatabase";
 const adminTokenKey = "hoopevalAdminToken";
+
+const defaultConsent = {
+  required: false,
+  audioRecording: false,
+  screenRecording: false,
+  anonymousQuotation: false,
+};
+
+const defaultBackground = {
+  currentRole: "",
+  yearsExperience: "",
+  highestLevel: "",
+  videoToolUse: "",
+  analyticsUse: "",
+  epvFamiliarity: "",
+  visualizationComfort: "",
+};
+
+const defaultPostStudy = {
+  overallUsefulness: "",
+  overallInterpretability: "",
+  overallTrust: "",
+  overallContestability: "",
+  explanationUsefulness: "",
+  likelyUseCases: [],
+  useCaseExplanation: "",
+};
+
+const getSessionSortTime = (session) => new Date(session.savedAt || session.startTime || 0).getTime();
+
+const getLatestParticipantSessions = (sessions) => {
+  const latestByParticipant = new Map();
+
+  [...sessions]
+    .filter((session) => session.participantId?.toLowerCase() !== "admin")
+    .sort((left, right) => getSessionSortTime(right) - getSessionSortTime(left))
+    .forEach((session) => {
+      const participantId = session.participantId?.trim().toLowerCase();
+      if (participantId && !latestByParticipant.has(participantId)) {
+        latestByParticipant.set(participantId, session);
+      }
+    });
+
+  return [...latestByParticipant.values()].sort((left, right) => getSessionSortTime(left) - getSessionSortTime(right));
+};
 
 const createSessionId = () => `hoopeval-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`;
 
@@ -149,18 +229,21 @@ const apiRequest = async (path, options = {}) => {
   });
 
   if (!response.ok) {
-    throw new Error(`API request failed: ${response.status}`);
+    const error = new Error(`API request failed: ${response.status}`);
+    error.status = response.status;
+    throw error;
   }
 
   return response.json();
 };
 
-const fetchStudyDatabase = async (adminToken = "") => {
+const fetchStudyDatabase = async (adminToken = "", { fallbackToLocal = true } = {}) => {
   try {
     const data = await apiRequest("/api/sessions", { adminToken });
-    return Array.isArray(data.sessions) ? data.sessions : [];
-  } catch {
-    return readStudyDatabase();
+    return { sessions: Array.isArray(data.sessions) ? data.sessions : [], source: "backend" };
+  } catch (error) {
+    if (!fallbackToLocal) throw error;
+    return { sessions: readStudyDatabase(), source: "browser" };
   }
 };
 
@@ -173,6 +256,30 @@ const saveStudySession = async (session) => {
     return true;
   } catch {
     return false;
+  }
+};
+
+const deleteStudySession = async (sessionId, adminToken = "") => {
+  await apiRequest(`/api/sessions/${encodeURIComponent(sessionId)}`, {
+    method: "DELETE",
+    adminToken,
+  });
+};
+
+const clearStudySessions = async (adminToken = "") => {
+  await apiRequest("/api/sessions", {
+    method: "DELETE",
+    adminToken,
+  });
+};
+
+const fetchLatestParticipantSession = async (participantId) => {
+  try {
+    const params = new URLSearchParams({ participantId });
+    const data = await apiRequest(`/api/sessions/latest?${params.toString()}`);
+    return data.session || null;
+  } catch {
+    return null;
   }
 };
 
@@ -596,10 +703,7 @@ const PossessionViewer = ({
       return;
     }
 
-    const restarted = isAtPlaybackEnd;
-    if (isAtPlaybackEnd) {
-      setCurrentStep?.(0);
-    }
+    const restarted = false;
     setIsPlaying?.(true);
     onInteraction?.("playback_play", { source: "viewer_controls", restarted });
   };
@@ -653,7 +757,6 @@ const PossessionViewer = ({
               isPlaying={isPlaying}
               setIsPlaying={setIsPlaying}
               totalFrames={totalFrames}
-              playbackEndStep={playbackEndStep}
               onPlayPause={handlePlayPause}
               qBall={qBall}
               contributionData={contributionData}
@@ -688,7 +791,7 @@ const PossessionViewer = ({
               )}
             </Stack>
             <Stack direction="row" spacing={0.5} alignItems="center">
-              <Tooltip title={isPlaying ? "Pause playback" : isAtPlaybackEnd ? "Play from beginning" : "Play possession"}>
+              <Tooltip title={isPlaying ? "Pause playback" : isAtPlaybackEnd ? "Playback finished" : "Play possession"}>
                 <IconButton color="primary" onClick={handlePlayPause} aria-label={isPlaying ? "pause playback" : "play playback"} sx={{ width: 42, height: 42 }}>
                   {isPlaying ? (
                     <PauseCircleOutlineRoundedIcon />
@@ -765,8 +868,11 @@ function App() {
   const [realPlayerActions, setRealPlayerActions] = useState([]);
   const [realBallActions, setRealBallActions] = useState([]);
   const [contributionData, setContributionData] = useState([]);
+  const [playerNameById, setPlayerNameById] = useState({});
   const [isLegendOpen, setIsLegendOpen] = useState(false);
   const [isLoading, setIsLoading] = useState(false);
+  const [isStartingStudy, setIsStartingStudy] = useState(false);
+  const [isCheckingResume, setIsCheckingResume] = useState(false);
   const [errorText, setErrorText] = useState("");
   const [currentStep, setCurrentStep] = useState(0);
   const [isPlaying, setIsPlaying] = useState(false);
@@ -775,13 +881,9 @@ function App() {
 
   const [page, setPage] = useState("welcome");
   const [participantId, setParticipantId] = useState("");
-  const [consent, setConsent] = useState({
-    required: false,
-    audioRecording: false,
-    screenRecording: false,
-    anonymousQuotation: false,
-  });
+  const [consent, setConsent] = useState(defaultConsent);
   const [session, setSession] = useState(null);
+  const [resumeCandidateSession, setResumeCandidateSession] = useState(null);
   const [trialIndex, setTrialIndex] = useState(0);
   const [phase, setPhase] = useState("a");
   const [trialQuestionStep, setTrialQuestionStep] = useState(0);
@@ -800,28 +902,16 @@ function App() {
     disagreementExplanation: "",
     disagreementMoment: "",
   });
-  const [background, setBackground] = useState({
-    currentRole: "",
-    yearsExperience: "",
-    highestLevel: "",
-    videoToolUse: "",
-    analyticsUse: "",
-    epvFamiliarity: "",
-    visualizationComfort: "",
-  });
-  const [postStudy, setPostStudy] = useState({
-    overallUsefulness: "",
-    overallInterpretability: "",
-    overallTrust: "",
-    overallContestability: "",
-    explanationUsefulness: "",
-    likelyUseCases: [],
-    useCaseExplanation: "",
-  });
-  const [interviewNotes, setInterviewNotes] = useState(() =>
-    Object.fromEntries(interviewSections.map((section) => [section, ""])),
-  );
+  const [background, setBackground] = useState(defaultBackground);
+  const [postStudy, setPostStudy] = useState(defaultPostStudy);
+  const [interviewNotes, setInterviewNotes] = useState(createEmptyInterviewNotes);
   const [completedSessions, setCompletedSessions] = useState(() => readStudyDatabase());
+  const [selectedStatsSessionId, setSelectedStatsSessionId] = useState("");
+  const [databaseStatus, setDatabaseStatus] = useState({
+    source: "browser",
+    message: "Showing browser-local responses until backend refresh succeeds.",
+    error: "",
+  });
   const [noticeText, setNoticeText] = useState("");
   const lastSavedPayloadRef = useRef("");
 
@@ -832,6 +922,7 @@ function App() {
   const overallExampleIndex = session?.trials?.findIndex((trial) => !trial.isPractice) ?? -1;
   const normalizedOverallExampleIndex = overallExampleIndex >= 0 ? overallExampleIndex : 0;
   const isAdmin = participantId.trim().toLowerCase() === "admin" || session?.participantId?.toLowerCase() === "admin";
+  const displayedParticipantId = session?.participantId || participantId.trim() || "No participant";
   const isAdminMenuOpen = Boolean(adminMenuAnchor);
   const isWorkflowPage = page === "trial" || page === "post";
   const ballActionStep = useMemo(() => {
@@ -849,12 +940,45 @@ function App() {
   const shouldStopAtBallAction = phase === "a" && trialQuestionStep === 0 && Number.isInteger(ballActionStep);
   const questionOneStopStep = shouldStopAtBallAction ? ballActionStep : undefined;
 
+  useEffect(() => {
+    const loadPlayerNames = async () => {
+      const playerNamesUrl = import.meta.env.VITE_PLAYER_NAMES_URL || `${import.meta.env.BASE_URL}players.csv`;
+
+      try {
+        const response = await fetch(playerNamesUrl);
+        if (!response.ok) return;
+
+        const csvText = await response.text();
+        const parsed = Papa.parse(csvText, { header: true, skipEmptyLines: true });
+        setPlayerNameById(buildPlayerNameMap(parsed.data));
+      } catch {
+        setPlayerNameById({});
+      }
+    };
+
+    void loadPlayerNames();
+  }, []);
+
   const updateSession = (updater) => {
     setSession((prev) => {
       if (!prev) return prev;
       return updater(prev);
     });
   };
+
+  const persistSessionUpdate = useCallback((updater) => {
+    if (!session) return null;
+
+    const nextSession = updater(session);
+    setSession(nextSession);
+
+    if (nextSession.participantId?.toLowerCase() !== "admin") {
+      void saveStudySession(nextSession);
+      lastSavedPayloadRef.current = JSON.stringify(nextSession);
+    }
+
+    return nextSession;
+  }, [session]);
 
   const logInteraction = useCallback((eventType, details = {}) => {
     setSession((prev) => {
@@ -880,17 +1004,33 @@ function App() {
     });
   }, [currentSequenceId, currentStep, page, phase, trialIndex, trialQuestionStep]);
 
-  const getAdminToken = useCallback(() => {
-    const storedToken = localStorage.getItem(adminTokenKey);
+  const getAdminToken = useCallback((forcePrompt = false) => {
+    const storedToken = forcePrompt ? "" : localStorage.getItem(adminTokenKey);
     if (storedToken) return storedToken;
 
-    const enteredToken = window.prompt("Enter admin export token");
+    const enteredToken = window.prompt(forcePrompt ? "Admin token rejected. Enter admin export token again." : "Enter admin export token");
     if (enteredToken) {
       localStorage.setItem(adminTokenKey, enteredToken);
       return enteredToken;
     }
 
     return "";
+  }, []);
+
+  const setAdminTokenManually = useCallback(() => {
+    const currentToken = localStorage.getItem(adminTokenKey) || "";
+    const enteredToken = window.prompt("Set admin export token", currentToken);
+    if (enteredToken === null) return;
+
+    const trimmedToken = enteredToken.trim();
+    if (trimmedToken) {
+      localStorage.setItem(adminTokenKey, trimmedToken);
+      setDatabaseStatus((prev) => ({ ...prev, error: "", message: "Admin token updated. Click Refresh to load backend data." }));
+      return;
+    }
+
+    localStorage.removeItem(adminTokenKey);
+    setDatabaseStatus((prev) => ({ ...prev, error: "", message: "Admin token cleared. Click Refresh and enter a token." }));
   }, []);
 
   const markPageStart = (nextPage) => {
@@ -916,9 +1056,38 @@ function App() {
   };
 
   const loadCompletedSessions = useCallback(async () => {
-    const sessions = await fetchStudyDatabase(isAdmin ? getAdminToken() : "");
-    writeStudyDatabase(sessions);
-    setCompletedSessions(sessions);
+    setDatabaseStatus((prev) => ({ ...prev, message: "Refreshing backend data...", error: "" }));
+
+    try {
+      let result;
+      try {
+        result = await fetchStudyDatabase(isAdmin ? localStorage.getItem(adminTokenKey) || "" : "", {
+          fallbackToLocal: !isAdmin,
+        });
+      } catch (error) {
+        if (!isAdmin || error.status !== 401) throw error;
+        localStorage.removeItem(adminTokenKey);
+        result = await fetchStudyDatabase(getAdminToken(true), { fallbackToLocal: false });
+      }
+
+      const { sessions, source } = result;
+      writeStudyDatabase(sessions);
+      setCompletedSessions(sessions);
+      setDatabaseStatus({
+        source,
+        message:
+          source === "backend"
+            ? `Loaded ${sessions.length} session${sessions.length === 1 ? "" : "s"} from the backend database.`
+            : "Backend unavailable. Showing browser-local responses only.",
+        error: "",
+      });
+    } catch (error) {
+      setDatabaseStatus({
+        source: "error",
+        message: "Backend database refresh failed. Check the admin token and Render service.",
+        error: error.message || "Unknown error",
+      });
+    }
   }, [getAdminToken, isAdmin]);
 
   const clearLoadedData = useCallback(() => {
@@ -944,13 +1113,17 @@ function App() {
       const playerIds = data?.player_ids || [];
 
       setPlayerData(
-        playerIds.map((playerId, index) => ({
-          agent_id: playerId,
-          teamID: playerId === -1 ? -1 : index <= 5 ? 1610612737 : 1610612738,
-          real_T: frames.map((frame) => frame.xy[index]),
-          name: playerId === -1 ? "Ball" : `Player ${playerId}`,
-          jersey: playerId === -1 ? "" : `${index}`,
-        })),
+        playerIds.map((playerId, index) => {
+          const fullName = playerId === -1 ? "Ball" : playerNameById[String(playerId)] || "";
+          return {
+            agent_id: playerId,
+            teamID: playerId === -1 ? -1 : index <= 5 ? 1610612737 : 1610612738,
+            real_T: frames.map((frame) => frame.xy[index]),
+            name: fullName || `Player ${playerId}`,
+            shortName: playerId === -1 ? "Ball" : fullName ? toShortPlayerName(fullName) : "",
+            jersey: playerId === -1 ? "" : `${index}`,
+          };
+        }),
       );
       setValueData(frames.map((frame) => frame?.Value?.[0]));
       setQBall(frames.map((frame) => frame.Q_ball));
@@ -989,7 +1162,7 @@ function App() {
     } finally {
       setIsLoading(false);
     }
-  }, [clearLoadedData]);
+  }, [clearLoadedData, playerNameById]);
 
   useEffect(() => {
     if (currentSequenceId) {
@@ -1027,6 +1200,18 @@ function App() {
       localStorage.setItem("hoopevalStudySession", JSON.stringify(session));
     }
   }, [session]);
+
+  useEffect(() => {
+    const participantSessions = completedSessions.filter((item) => item.participantId?.toLowerCase() !== "admin");
+    if (!participantSessions.length) {
+      setSelectedStatsSessionId("");
+      return;
+    }
+
+    if (!participantSessions.some((item) => item.sessionId === selectedStatsSessionId)) {
+      setSelectedStatsSessionId(participantSessions[0].sessionId);
+    }
+  }, [completedSessions, selectedStatsSessionId]);
 
   useEffect(() => {
     if (!session || session.participantId?.toLowerCase() === "admin") return undefined;
@@ -1105,6 +1290,125 @@ function App() {
     logInteraction("trial_start", { targetTrialIndex: index, targetSequenceId: trial.sequenceId });
   };
 
+  const applySavedSessionForms = useCallback((savedSession) => {
+    const savedBackground = savedSession.backgroundResponses || {};
+    const savedPostStudy = savedSession.postStudyResponses || {};
+
+    setParticipantId(savedSession.participantId || "");
+    setConsent({ ...defaultConsent, ...(savedSession.consent || {}) });
+    setBackground({ ...defaultBackground, ...savedBackground });
+    setPostStudy({ ...defaultPostStudy, ...savedPostStudy });
+    setInterviewNotes({ ...createEmptyInterviewNotes(), ...(savedSession.interviewNotes || {}) });
+  }, []);
+
+  const restoreParticipantSession = (savedSession) => {
+    const trials = savedSession.trials || [];
+    const firstIncompleteTrialIndex = trials.findIndex((trial) => !trial.phaseBEndTime);
+    const savedBackground = savedSession.backgroundResponses || {};
+    const hasBackground = Object.values(savedBackground).some(Boolean);
+
+    applySavedSessionForms(savedSession);
+    setSession(savedSession);
+    lastSavedPayloadRef.current = JSON.stringify(savedSession);
+    setCurrentStep(0);
+    setIsPlaying(false);
+
+    if (!hasBackground) {
+      setPage("background");
+      setNoticeText("Previous unfinished session loaded");
+      return;
+    }
+
+    if (firstIncompleteTrialIndex >= 0) {
+      const trial = trials[firstIncompleteTrialIndex];
+      const resumedPhase = trial.phaseAEndTime ? "b" : "a";
+      const resumedQuestionStep =
+        resumedPhase === "a" && (trial.actionQuestionEndTime || trial.independentActionRanking?.length) ? 1 : 0;
+
+      setPage("trial");
+      setTrialIndex(firstIncompleteTrialIndex);
+      setPhase(resumedPhase);
+      setTrialQuestionStep(resumedQuestionStep);
+      setPhaseA({
+        independentActionRanking: trial.independentActionRanking || [],
+        independentActionRationale: trial.independentActionRationale || "",
+        independentPlayerRanking: trial.independentPlayerRanking || [],
+        playerContributionRationale: trial.playerContributionRationale || "",
+      });
+      setPhaseB({
+        epvAlignment: trial.epvAlignment || "",
+        actionAlignment: trial.actionAlignment || "",
+        playerContributionAlignment: trial.playerContributionAlignment || "",
+        trust: trial.trust || "",
+        contestability: trial.contestability || "",
+        disagreementExplanation: trial.disagreementExplanation || "",
+        disagreementMoment: trial.disagreementMoment || "",
+      });
+      setNoticeText("Previous unfinished session loaded");
+      return;
+    }
+
+    setTrialIndex(Math.max(trials.length - 1, 0));
+    setPhase("b");
+    setTrialQuestionStep(0);
+    setPage("post");
+    setNoticeText("Previous unfinished session loaded");
+  };
+
+  const recheckParticipantSession = useCallback(async (nextParticipantId = participantId.trim(), { resetMissing = false } = {}) => {
+    const cleanParticipantId = nextParticipantId.trim();
+    if (!cleanParticipantId || cleanParticipantId.toLowerCase() === "admin") {
+      setResumeCandidateSession(null);
+      setIsCheckingResume(false);
+      return null;
+    }
+
+    setIsCheckingResume(true);
+    try {
+      const savedSession = await fetchLatestParticipantSession(cleanParticipantId);
+      if (savedSession) {
+        setResumeCandidateSession(savedSession);
+        applySavedSessionForms(savedSession);
+        setNoticeText(savedSession.endTime ? "Previous participant fields loaded" : "Previous unfinished session found");
+        return savedSession;
+      }
+
+      setResumeCandidateSession(null);
+      if (resetMissing) {
+        setConsent(defaultConsent);
+        setBackground(defaultBackground);
+        setPostStudy(defaultPostStudy);
+        setInterviewNotes(createEmptyInterviewNotes());
+      }
+      return null;
+    } finally {
+      setIsCheckingResume(false);
+    }
+  }, [applySavedSessionForms, participantId]);
+
+  useEffect(() => {
+    const nextParticipantId = participantId.trim();
+    if (page !== "welcome" || session || !nextParticipantId || nextParticipantId.toLowerCase() === "admin") {
+      setResumeCandidateSession(null);
+      setIsCheckingResume(false);
+      return undefined;
+    }
+
+    setResumeCandidateSession(null);
+    setConsent(defaultConsent);
+    setBackground(defaultBackground);
+    setPostStudy(defaultPostStudy);
+    setInterviewNotes(createEmptyInterviewNotes());
+
+    const timeoutId = window.setTimeout(() => {
+      void recheckParticipantSession(nextParticipantId, { resetMissing: false });
+    }, 450);
+
+    return () => {
+      window.clearTimeout(timeoutId);
+    };
+  }, [page, participantId, recheckParticipantSession, session]);
+
   const createSession = (nextParticipantId = participantId.trim(), nextConsent = consent) => {
     const configuredPracticeSequences =
       studyConfig.practiceSequenceIds || [studyConfig.practiceSequenceId].filter(Boolean);
@@ -1138,18 +1442,48 @@ function App() {
     };
   };
 
-  const beginStudy = () => {
-    setSession(
-      createSession(participantId.trim(), {
-        ...consent,
-        required: consent.required || isAdmin,
-      }),
-    );
-    setPage("background");
+  const beginStudy = async () => {
+    const nextParticipantId = participantId.trim();
+    const nextConsent = {
+      ...consent,
+      required: consent.required || isAdmin,
+    };
+
+    setIsStartingStudy(true);
+    try {
+      let savedParticipantSession = null;
+      if (!isAdmin) {
+        const savedSession =
+          resumeCandidateSession?.participantId?.trim().toLowerCase() === nextParticipantId.toLowerCase()
+            ? resumeCandidateSession
+            : await fetchLatestParticipantSession(nextParticipantId);
+        if (savedSession && !savedSession.endTime) {
+          restoreParticipantSession(savedSession);
+          return;
+        }
+        if (savedSession) {
+          savedParticipantSession = savedSession;
+          applySavedSessionForms(savedSession);
+        }
+      }
+
+      const newSession = createSession(
+        nextParticipantId,
+        savedParticipantSession?.consent ? { ...defaultConsent, ...savedParticipantSession.consent } : nextConsent,
+      );
+      setSession(newSession);
+      if (newSession.participantId?.toLowerCase() !== "admin") {
+        void saveStudySession(newSession);
+        lastSavedPayloadRef.current = JSON.stringify(newSession);
+      }
+      setPage("background");
+    } finally {
+      setIsStartingStudy(false);
+    }
   };
 
   const submitBackground = () => {
-    updateSession((prev) => ({ ...prev, backgroundResponses: background }));
+    persistSessionUpdate((prev) => ({ ...prev, backgroundResponses: background }));
     markPageStart("trial");
     setTimeout(() => startTrial(0), 0);
   };
@@ -1160,9 +1494,28 @@ function App() {
     phaseA.independentPlayerRanking.filter(Boolean).length === currentSequence?.playerLabels.length &&
     new Set(phaseA.independentPlayerRanking).size === currentSequence?.playerLabels.length;
 
+  const submitActionQuestion = () => {
+    const answeredAt = nowIso();
+    persistSessionUpdate((prev) => ({
+      ...prev,
+      trials: prev.trials.map((trial, index) =>
+        index === trialIndex
+          ? {
+              ...trial,
+              independentActionRanking: phaseA.independentActionRanking,
+              independentActionRationale: phaseA.independentActionRationale,
+              actionQuestionEndTime: answeredAt,
+            }
+          : trial,
+      ),
+    }));
+    setTrialQuestionStep(1);
+    logInteraction("question_next", { fromQuestion: "action_ranking" });
+  };
+
   const submitPhaseA = () => {
     const revealTime = nowIso();
-    updateSession((prev) => ({
+    persistSessionUpdate((prev) => ({
       ...prev,
       trials: prev.trials.map((trial, index) =>
         index === trialIndex
@@ -1185,7 +1538,7 @@ function App() {
 
   const submitPhaseB = () => {
     const completedAt = nowIso();
-    updateSession((prev) => ({
+    persistSessionUpdate((prev) => ({
       ...prev,
       trials: prev.trials.map((trial, index) =>
         index === trialIndex ? { ...trial, ...phaseB, phaseBEndTime: completedAt } : trial,
@@ -1441,7 +1794,7 @@ function App() {
   };
 
   const buildOverallStats = () => {
-    const participantSessions = completedSessions.filter((item) => item.participantId?.toLowerCase() !== "admin");
+    const participantSessions = getLatestParticipantSessions(completedSessions);
     const trials = participantSessions.flatMap((item) => (item.trials || []).filter((trial) => !trial.isPractice));
     const numericAverage = (values) => {
       const cleanValues = values.map(Number).filter(Number.isFinite);
@@ -1482,6 +1835,62 @@ function App() {
     downloadText("hoopeval_study_database.json", JSON.stringify(completedSessions, null, 2), "application/json");
   };
 
+  const deleteSelectedStatsSession = async () => {
+    if (!selectedStatsSessionId) return;
+    const selectedSession = completedSessions.find((item) => item.sessionId === selectedStatsSessionId);
+    const confirmed = window.confirm(
+      `Delete backend data point for ${selectedSession?.participantId || "this participant"}?\n\nSession: ${selectedStatsSessionId}`,
+    );
+    if (!confirmed) return;
+
+    setDatabaseStatus((prev) => ({ ...prev, message: "Deleting selected backend row...", error: "" }));
+    try {
+      const token = getAdminToken();
+      await deleteStudySession(selectedStatsSessionId, token);
+      const nextSessions = completedSessions.filter((item) => item.sessionId !== selectedStatsSessionId);
+      writeStudyDatabase(nextSessions);
+      setCompletedSessions(nextSessions);
+      setSelectedStatsSessionId(nextSessions.find((item) => item.participantId?.toLowerCase() !== "admin")?.sessionId || "");
+      setDatabaseStatus({
+        source: "backend",
+        message: "Deleted selected backend row.",
+        error: "",
+      });
+      void loadCompletedSessions();
+    } catch (error) {
+      setDatabaseStatus({
+        source: "error",
+        message: "Backend delete failed. Check the admin token and backend service.",
+        error: error.message || "Unknown error",
+      });
+    }
+  };
+
+  const clearBackendDatabase = async () => {
+    const confirmed = window.confirm("Delete every stored backend session row? This cannot be undone.");
+    if (!confirmed) return;
+
+    setDatabaseStatus((prev) => ({ ...prev, message: "Clearing backend database...", error: "" }));
+    try {
+      const token = getAdminToken();
+      await clearStudySessions(token);
+      writeStudyDatabase([]);
+      setCompletedSessions([]);
+      setSelectedStatsSessionId("");
+      setDatabaseStatus({
+        source: "backend",
+        message: "Backend database cleared.",
+        error: "",
+      });
+    } catch (error) {
+      setDatabaseStatus({
+        source: "error",
+        message: "Backend clear failed. Check the admin token and backend service.",
+        error: error.message || "Unknown error",
+      });
+    }
+  };
+
   const renderCountList = (counts) => {
     const entries = Object.entries(counts).sort((left, right) => right[1] - left[1]);
     if (!entries.length) {
@@ -1500,6 +1909,40 @@ function App() {
     );
   };
 
+  const formatStatValue = (value) => {
+    if (Array.isArray(value)) return value.length ? value.join(" | ") : "--";
+    if (value == null || value === "") return "--";
+    if (typeof value === "object") return JSON.stringify(value);
+    return String(value);
+  };
+
+  const formatTimestamp = (value) => {
+    if (!value) return "--";
+    const date = new Date(value);
+    return Number.isNaN(date.getTime()) ? String(value) : date.toLocaleString();
+  };
+
+  const averageTrialValue = (trials, field) => {
+    const values = trials.map((trial) => Number(trial[field])).filter(Number.isFinite);
+    if (!values.length) return "--";
+    return (values.reduce((sum, value) => sum + value, 0) / values.length).toFixed(2);
+  };
+
+  const renderKeyValueRows = (rows) => (
+    <Box sx={{ display: "grid", gridTemplateColumns: { xs: "1fr", sm: "180px minmax(0, 1fr)" }, gap: 0.75 }}>
+      {rows.map(([label, value]) => (
+        <React.Fragment key={label}>
+          <Typography variant="caption" color="text.secondary" sx={{ fontWeight: 700 }}>
+            {label}
+          </Typography>
+          <Typography variant="body2" sx={{ overflowWrap: "anywhere" }}>
+            {formatStatValue(value)}
+          </Typography>
+        </React.Fragment>
+      ))}
+    </Box>
+  );
+
   const renderWelcome = () => (
     <Section
       title="Consent"
@@ -1514,6 +1957,9 @@ function App() {
           label="Participant ID"
           value={participantId}
           onChange={(event) => setParticipantId(event.target.value)}
+          onBlur={() => {
+            if (participantId.trim()) void recheckParticipantSession(participantId.trim(), { resetMissing: false });
+          }}
           required
           fullWidth
         />
@@ -1535,9 +1981,19 @@ function App() {
             label="Anonymous quotation"
           />
         </Stack>
-        <GuidedActionButton onClick={beginStudy} disabled={!isAdmin && (!participantId.trim() || !consent.required)}>
-          Start
+        <GuidedActionButton
+          onClick={beginStudy}
+          disabled={isStartingStudy || isCheckingResume || (!isAdmin && (!participantId.trim() || !consent.required))}
+        >
+          {isStartingStudy || isCheckingResume ? "Loading..." : resumeCandidateSession && !resumeCandidateSession.endTime ? "Resume" : "Start"}
         </GuidedActionButton>
+        <Button
+          variant="outlined"
+          onClick={() => void recheckParticipantSession(participantId.trim(), { resetMissing: false })}
+          disabled={!participantId.trim() || isCheckingResume}
+        >
+          Recheck Saved Fields
+        </Button>
       </Stack>
     </Section>
   );
@@ -1550,6 +2006,15 @@ function App() {
       <Box sx={{ display: "grid", gap: 1.5, gridTemplateColumns: { xs: "1fr", md: "1fr 1fr" } }}>
         <Box sx={{ gridColumn: { md: "1 / -1" } }}>
           <StepGuide items={["Complete fields", "Review selections", "Click Continue"]} />
+        </Box>
+        <Box sx={{ gridColumn: { md: "1 / -1" } }}>
+          <Button
+            variant="outlined"
+            onClick={() => void recheckParticipantSession(session?.participantId || participantId.trim(), { resetMissing: false })}
+            disabled={isCheckingResume || !(session?.participantId || participantId.trim())}
+          >
+            Recheck Saved Fields
+          </Button>
         </Box>
         <TextField label="Current basketball role" value={background.currentRole} onChange={(event) => setBackground({ ...background, currentRole: event.target.value })} required />
         <TextField label="Years of experience" type="number" value={background.yearsExperience} onChange={(event) => setBackground({ ...background, yearsExperience: event.target.value })} required />
@@ -1706,7 +2171,7 @@ function App() {
                 </ThinkAloudPrompt>
                 <ActionFooter>
                   <GuidedActionButton
-                    onClick={() => setTrialQuestionStep(1)}
+                    onClick={submitActionQuestion}
                     disabled={!isAdmin && !phaseAActionReady}
                   >
                     Next Question
@@ -1928,6 +2393,14 @@ function App() {
             description="Answer these once after all trial-based questions are complete."
           >
             <Stack spacing={1.25} sx={{ minHeight: "100%" }}>
+              <Button
+                variant="outlined"
+                size="small"
+                onClick={() => void recheckParticipantSession(session?.participantId || participantId.trim(), { resetMissing: false })}
+                disabled={isCheckingResume || !(session?.participantId || participantId.trim())}
+              >
+                Recheck Saved Fields
+              </Button>
               <Box>
                 <Typography variant="subtitle2" gutterBottom>
                   Question 4
@@ -2033,6 +2506,26 @@ function App() {
 
   const renderStats = () => {
     const stats = buildOverallStats();
+    const participantSessions = completedSessions.filter((item) => item.participantId?.toLowerCase() !== "admin");
+    const selectedStatsSession =
+      participantSessions.find((item) => item.sessionId === selectedStatsSessionId) || participantSessions[0] || null;
+    const selectedTrials = (selectedStatsSession?.trials || []).filter((trial) => !trial.isPractice);
+    const sessionRows = participantSessions.map((item) => {
+      const trials = (item.trials || []).filter((trial) => !trial.isPractice);
+      return {
+        sessionId: item.sessionId,
+        participantId: item.participantId,
+        completed: item.endTime ? "Yes" : "No",
+        startedAt: formatTimestamp(item.startTime),
+        completedAt: formatTimestamp(item.endTime),
+        trialCount: trials.length,
+        avgEpvMatch: averageTrialValue(trials, "epvAlignment"),
+        explanationUsefulness: item.postStudyResponses?.explanationUsefulness || "--",
+        coachingUsefulness: item.postStudyResponses?.overallUsefulness || "--",
+        topAction: trials[0]?.independentActionRanking?.[0] || "--",
+        topPlayer: trials[0]?.independentPlayerRanking?.[0] || "--",
+      };
+    });
     const statCards = [
       ["Completed sessions", stats.sessionCount],
       ["Main trial responses", stats.trialCount],
@@ -2045,18 +2538,31 @@ function App() {
     return (
       <Section
         title="Study Progress"
-        description="Admin view of completed non-admin sessions saved through the backend, with browser-local fallback."
+        description="Admin view of non-admin sessions. Use Refresh to load the backend database."
         action={
           <Stack direction="row" spacing={1}>
+            <Button variant="outlined" onClick={setAdminTokenManually}>
+              Set Token
+            </Button>
             <Button variant="outlined" onClick={loadCompletedSessions}>
               Refresh
             </Button>
             <Button variant="contained" startIcon={<DownloadRoundedIcon />} onClick={exportDatabase}>
               Export Database
             </Button>
+            <Button variant="outlined" color="error" onClick={clearBackendDatabase}>
+              Clear Backend
+            </Button>
           </Stack>
         }
       >
+        <Alert
+          severity={databaseStatus.source === "backend" ? "success" : databaseStatus.source === "error" ? "error" : "warning"}
+          sx={{ mb: 1.25 }}
+        >
+          {databaseStatus.message}
+          {databaseStatus.error ? ` (${databaseStatus.error})` : ""}
+        </Alert>
         <Box sx={{ display: "grid", gap: 1.25, gridTemplateColumns: { xs: "1fr", sm: "repeat(2, 1fr)", lg: "repeat(3, 1fr)" } }}>
           {statCards.map(([label, value]) => (
             <Paper key={label} elevation={0} sx={{ p: 1.5, border: "1px solid", borderColor: "divider" }}>
@@ -2091,6 +2597,205 @@ function App() {
             {renderCountList(stats.useCases)}
           </Paper>
         </Box>
+
+        <Box sx={{ mt: 2 }}>
+          <Typography variant="subtitle1" fontWeight={700} gutterBottom>
+            Stored Participant Sessions
+          </Typography>
+          <Typography variant="body2" color="text.secondary" sx={{ mb: 1 }}>
+            Showing raw backend rows. Select a row to inspect or delete that stored data point.
+          </Typography>
+          <Paper elevation={0} sx={{ border: "1px solid", borderColor: "divider", overflow: "auto" }}>
+            <Box
+              sx={{
+                minWidth: 1080,
+                display: "grid",
+                gridTemplateColumns: "120px 88px 165px 165px 80px 110px 130px 130px 115px 115px",
+                bgcolor: "grey.100",
+                borderBottom: "1px solid",
+                borderColor: "divider",
+              }}
+            >
+              {["Participant", "Done", "Started", "Completed", "Trials", "Avg EPV", "Explanation", "Coaching", "Top action", "Top player"].map((header) => (
+                <Typography key={header} variant="caption" sx={{ p: 1, fontWeight: 800 }}>
+                  {header}
+                </Typography>
+              ))}
+            </Box>
+            {sessionRows.length ? (
+              sessionRows.map((row) => {
+                const selected = row.sessionId === selectedStatsSession?.sessionId;
+                return (
+                  <Box
+                    key={row.sessionId}
+                    component="button"
+                    type="button"
+                    onClick={() => setSelectedStatsSessionId(row.sessionId)}
+                    sx={{
+                      minWidth: 1080,
+                      width: "100%",
+                      display: "grid",
+                      gridTemplateColumns: "120px 88px 165px 165px 80px 110px 130px 130px 115px 115px",
+                      border: 0,
+                      borderBottom: "1px solid",
+                      borderColor: "divider",
+                      bgcolor: selected ? alpha("#0f4c81", 0.08) : "background.paper",
+                      color: "text.primary",
+                      textAlign: "left",
+                      cursor: "pointer",
+                      "&:hover": { bgcolor: alpha("#0f4c81", 0.05) },
+                    }}
+                  >
+                    {[
+                      row.participantId,
+                      row.completed,
+                      row.startedAt,
+                      row.completedAt,
+                      row.trialCount,
+                      row.avgEpvMatch,
+                      row.explanationUsefulness,
+                      row.coachingUsefulness,
+                      row.topAction,
+                      row.topPlayer,
+                    ].map((value, index) => (
+                      <Typography key={`${row.sessionId}-${index}`} variant="body2" sx={{ p: 1, overflowWrap: "anywhere" }}>
+                        {formatStatValue(value)}
+                      </Typography>
+                    ))}
+                  </Box>
+                );
+              })
+            ) : (
+              <Typography variant="body2" color="text.secondary" sx={{ p: 1.5 }}>
+                No stored participant sessions loaded.
+              </Typography>
+            )}
+          </Paper>
+        </Box>
+
+        {selectedStatsSession && (
+          <Paper elevation={0} sx={{ mt: 1.5, p: 1.5, border: "1px solid", borderColor: "divider" }}>
+            <Stack direction={{ xs: "column", md: "row" }} justifyContent="space-between" gap={1} mb={1.25}>
+              <Box>
+                <Typography variant="subtitle1" fontWeight={700}>
+                  Individual Response: {selectedStatsSession.participantId}
+                </Typography>
+                <Typography variant="caption" color="text.secondary">
+                  {selectedStatsSession.sessionId}
+                </Typography>
+              </Box>
+              <Stack direction="row" spacing={1}>
+                <Button
+                  variant="outlined"
+                  size="small"
+                  onClick={() =>
+                    downloadText(
+                      `hoopeval_${selectedStatsSession.participantId || "participant"}_${selectedStatsSession.sessionId}.json`,
+                      JSON.stringify(selectedStatsSession, null, 2),
+                      "application/json",
+                    )
+                  }
+                >
+                  Export Individual JSON
+                </Button>
+                <Button
+                  variant="outlined"
+                  color="error"
+                  size="small"
+                  onClick={deleteSelectedStatsSession}
+                >
+                  Delete Backend Row
+                </Button>
+              </Stack>
+            </Stack>
+
+            <Box sx={{ mb: 1.25 }}>
+              <Typography variant="subtitle2" gutterBottom>Trial Responses</Typography>
+              <Paper elevation={0} sx={{ border: "1px solid", borderColor: "divider", overflow: "auto" }}>
+                <Box
+                  sx={{
+                    minWidth: 980,
+                    display: "grid",
+                    gridTemplateColumns: "56px 170px 200px 160px 100px 120px 170px",
+                    bgcolor: "grey.100",
+                    borderBottom: "1px solid",
+                    borderColor: "divider",
+                  }}
+                >
+                  {["#", "Sequence", "Action ranking", "Player ranking", "EPV match", "Model help", "Phase B end"].map((header) => (
+                    <Typography key={header} variant="caption" sx={{ p: 1, fontWeight: 800 }}>
+                      {header}
+                    </Typography>
+                  ))}
+                </Box>
+                {selectedTrials.length ? (
+                  selectedTrials.map((trial, index) => (
+                    <Box
+                      key={`${selectedStatsSession.sessionId}-${trial.sequenceId}-${index}`}
+                      sx={{
+                        minWidth: 980,
+                        display: "grid",
+                        gridTemplateColumns: "56px 170px 200px 160px 100px 120px 170px",
+                        borderBottom: "1px solid",
+                        borderColor: "divider",
+                      }}
+                    >
+                      {[
+                        index + 1,
+                        trial.sequenceId,
+                        trial.independentActionRanking,
+                        trial.independentPlayerRanking,
+                        trial.epvAlignment,
+                        trial.explanationUsefulness,
+                        formatTimestamp(trial.phaseBEndTime),
+                      ].map((value, valueIndex) => (
+                        <Typography key={valueIndex} variant="body2" sx={{ p: 1, overflowWrap: "anywhere" }}>
+                          {formatStatValue(value)}
+                        </Typography>
+                      ))}
+                    </Box>
+                  ))
+                ) : (
+                  <Typography variant="body2" color="text.secondary" sx={{ p: 1.5 }}>
+                    No main trial responses stored for this participant.
+                  </Typography>
+                )}
+              </Paper>
+            </Box>
+
+            <Box sx={{ display: "grid", gap: 1.25, gridTemplateColumns: { xs: "1fr", lg: "1fr 1fr" } }}>
+              <Paper elevation={0} sx={{ p: 1.25, border: "1px solid", borderColor: "divider" }}>
+                <Typography variant="subtitle2" gutterBottom>Session</Typography>
+                {renderKeyValueRows([
+                  ["participantId", selectedStatsSession.participantId],
+                  ["sessionId", selectedStatsSession.sessionId],
+                  ["startTime", formatTimestamp(selectedStatsSession.startTime)],
+                  ["endTime", formatTimestamp(selectedStatsSession.endTime)],
+                  ["savedAt", formatTimestamp(selectedStatsSession.savedAt)],
+                  ["trialOrder", selectedStatsSession.trialOrder || []],
+                ])}
+              </Paper>
+              <Paper elevation={0} sx={{ p: 1.25, border: "1px solid", borderColor: "divider" }}>
+                <Typography variant="subtitle2" gutterBottom>Background</Typography>
+                {renderKeyValueRows(Object.entries(selectedStatsSession.backgroundResponses || {}))}
+              </Paper>
+              <Paper elevation={0} sx={{ p: 1.25, border: "1px solid", borderColor: "divider" }}>
+                <Typography variant="subtitle2" gutterBottom>Post-Study</Typography>
+                {renderKeyValueRows(Object.entries(selectedStatsSession.postStudyResponses || {}))}
+              </Paper>
+              <Paper elevation={0} sx={{ p: 1.25, border: "1px solid", borderColor: "divider" }}>
+                <Typography variant="subtitle2" gutterBottom>Recorded Activity</Typography>
+                {renderKeyValueRows([
+                  ["interactionLog count", selectedStatsSession.interactionLog?.length || 0],
+                  ["notableMoments count", selectedStatsSession.notableMoments?.length || 0],
+                  ["pageTimestamps count", selectedStatsSession.pageTimestamps?.length || 0],
+                  ["browser", selectedStatsSession.browserMetadata?.userAgent],
+                  ["viewport", selectedStatsSession.browserMetadata ? `${selectedStatsSession.browserMetadata.viewportWidth} x ${selectedStatsSession.browserMetadata.viewportHeight}` : ""],
+                ])}
+              </Paper>
+            </Box>
+          </Paper>
+        )}
       </Section>
     );
   };
@@ -2161,7 +2866,7 @@ function App() {
                 )}
               </Box>
               <Stack direction="row" spacing={0.5} flexWrap="wrap" useFlexGap>
-                <Chip size="small" color="primary" label={session?.participantId || "No participant"} />
+                <Chip size="small" color="primary" label={displayedParticipantId} />
                 <Chip size="small" variant="outlined" label={page} />
                 {isAdmin && <Chip size="small" color="secondary" label="Admin" />}
                 {session && <Chip size="small" variant="outlined" label={`Trials: ${session.trials.length}`} />}
