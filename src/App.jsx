@@ -96,6 +96,16 @@ const explanationUsefulnessLabels = [
   "5 - Extremely helpful",
 ];
 
+const allBallActionChoices = [
+  "Shoot",
+  "Pass to Player 1",
+  "Pass to Player 2",
+  "Pass to Player 3",
+  "Pass to Player 4",
+  "Pass to Player 5",
+  "Keep dribbling",
+];
+
 const useCases = [
   "game preparation",
   "post-game analysis",
@@ -940,6 +950,16 @@ function App() {
   }, [realBallActions, totalFrames]);
   const shouldStopAtBallAction = phase === "a" && trialQuestionStep === 0 && Number.isInteger(ballActionStep);
   const questionOneStopStep = shouldStopAtBallAction ? ballActionStep : undefined;
+  const ballHandlerPlayerIndex = Number.isInteger(ballActionStep)
+    ? Number(realBallActions[ballActionStep])
+    : null;
+  const questionOneActionChoices = useMemo(() => {
+    if (!Number.isInteger(ballHandlerPlayerIndex) || ballHandlerPlayerIndex < 1 || ballHandlerPlayerIndex > 5) {
+      return allBallActionChoices;
+    }
+
+    return allBallActionChoices.filter((choice) => choice !== `Pass to Player ${ballHandlerPlayerIndex}`);
+  }, [ballHandlerPlayerIndex]);
 
   useEffect(() => {
     const loadPlayerNames = async () => {
@@ -1243,13 +1263,22 @@ function App() {
   useEffect(() => {
     if (phase !== "a" || !currentSequence) return;
 
-    if (trialQuestionStep === 0 && phaseA.independentActionRanking.length === 0) {
-      setPhaseA((prev) => ({ ...prev, independentActionRanking: currentSequence.candidateActions }));
+    if (trialQuestionStep === 0) {
+      setPhaseA((prev) => {
+        const validRanking = prev.independentActionRanking.filter((choice) => questionOneActionChoices.includes(choice));
+        const missingChoices = questionOneActionChoices.filter((choice) => !validRanking.includes(choice));
+        const normalizedRanking = [...validRanking, ...missingChoices];
+        const alreadyNormalized =
+          normalizedRanking.length === prev.independentActionRanking.length &&
+          normalizedRanking.every((choice, index) => choice === prev.independentActionRanking[index]);
+
+        return alreadyNormalized ? prev : { ...prev, independentActionRanking: normalizedRanking };
+      });
     }
     if (trialQuestionStep === 1 && phaseA.independentPlayerRanking.length === 0) {
       setPhaseA((prev) => ({ ...prev, independentPlayerRanking: currentSequence.playerLabels }));
     }
-  }, [currentSequence, phase, phaseA.independentActionRanking.length, phaseA.independentPlayerRanking.length, trialQuestionStep]);
+  }, [currentSequence, phase, phaseA.independentActionRanking.length, phaseA.independentPlayerRanking.length, questionOneActionChoices, trialQuestionStep]);
 
   useEffect(() => {
     if (phase !== "b") return;
@@ -1496,8 +1525,8 @@ function App() {
   };
 
   const phaseAComplete =
-    phaseA.independentActionRanking.filter(Boolean).length === currentSequence?.candidateActions.length &&
-    new Set(phaseA.independentActionRanking).size === currentSequence?.candidateActions.length &&
+    phaseA.independentActionRanking.filter(Boolean).length === questionOneActionChoices.length &&
+    new Set(phaseA.independentActionRanking).size === questionOneActionChoices.length &&
     phaseA.independentPlayerRanking.filter(Boolean).length === currentSequence?.playerLabels.length &&
     new Set(phaseA.independentPlayerRanking).size === currentSequence?.playerLabels.length;
 
@@ -2123,8 +2152,8 @@ function App() {
     const phaseLabel = phase === "a" ? "Phase A" : "Phase B";
     const currentQuestionNumber = phase === "a" ? trialQuestionStep + 1 : 3;
     const phaseAActionReady =
-      phaseA.independentActionRanking.filter(Boolean).length === currentSequence.candidateActions.length &&
-      new Set(phaseA.independentActionRanking).size === currentSequence.candidateActions.length;
+      phaseA.independentActionRanking.filter(Boolean).length === questionOneActionChoices.length &&
+      new Set(phaseA.independentActionRanking).size === questionOneActionChoices.length;
     const phaseAPlayerReady =
       phaseA.independentPlayerRanking.filter(Boolean).length === currentSequence.playerLabels.length &&
       new Set(phaseA.independentPlayerRanking).size === currentSequence.playerLabels.length;
@@ -2195,7 +2224,7 @@ function App() {
               <>
                 <RankingInputs
                   title="Rank possible ball actions"
-                  choices={currentSequence.candidateActions}
+                  choices={questionOneActionChoices}
                   value={phaseA.independentActionRanking}
                   onChange={(value) => {
                     setPhaseA({ ...phaseA, independentActionRanking: value });

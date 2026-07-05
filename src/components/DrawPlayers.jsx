@@ -120,8 +120,12 @@ const DrawPlayerVisualization = ({
           .attr("r", radius);
       }
 
+      const isOffensivePlayer = d.agent_id !== -1 && i >= 1 && i <= 5;
+      const isDefender = d.agent_id !== -1 && i > 5;
+      const defenderFill = "#7c3aed";
+      const defenderStroke = "#4c1d95";
       let playerFill = d.agent_id === -1 ? "orange" : "#222222";
-      if (i > 5) playerFill = "#d1d5db";
+      if (isDefender) playerFill = defenderFill;
 
       group
         .append("circle")
@@ -130,34 +134,29 @@ const DrawPlayerVisualization = ({
         .attr("r", radius)
         .style("fill", playerFill)
         .style("stroke-width", 2)
-        .style("stroke", "#ffffff")
-        .style("opacity", 0.9);
+        .style("stroke", isDefender ? defenderStroke : "#ffffff")
+        .style("opacity", isDefender ? 0.96 : 0.9);
 
-      const headshotSize = d.agent_id === -1 ? 2 * radius : 2.75 * radius;
-      const headshotOffsetY = d.agent_id === -1 ? 0 : -0.18 * radius;
-      const image = group
-        .append("image")
-        .attr("class", "player-headshot")
-        .attr(
-          "href",
-          d.agent_id === -1
-            ? ""
-            : `https://cdn.nba.com/headshots/nba/latest/1040x760/${d.agent_id}.png`,
-        )
-        .attr("width", headshotSize)
-        .attr("height", headshotSize)
-        .attr("x", -headshotSize / 2)
-        .attr("y", -headshotSize / 2 + headshotOffsetY)
-        .style("opacity", d.agent_id === -1 ? 0.95 : 0.88)
-        .attr("transform", "rotate(90)");
-
-      if (d.agent_id !== -1) image.attr("clip-path", `url(#${clipPathId})`);
+      const headshotSize = 2.75 * radius;
+      if (isOffensivePlayer) {
+        group
+          .append("image")
+          .attr("class", "player-headshot")
+          .attr("href", `https://cdn.nba.com/headshots/nba/latest/1040x760/${d.agent_id}.png`)
+          .attr("width", headshotSize)
+          .attr("height", headshotSize)
+          .attr("x", -headshotSize / 2)
+          .attr("y", -headshotSize / 2 - 0.18 * radius)
+          .style("opacity", 0.92)
+          .attr("transform", "rotate(90)")
+          .attr("clip-path", `url(#${clipPathId})`);
+      }
       
       if (d.agent_id !== -1) {
-        const roleLabel = i >= 1 && i <= 5 ? `P${i}` : `D${i - 5}`;
-        const label = d.shortName ? `${roleLabel} (${d.shortName})` : roleLabel;
-        const labelOffset = headshotSize / 2 + Math.max(width / 260, 3);
-        const labelY = i >= 1 && i <= 5 ? -labelOffset : labelOffset;
+        const roleLabel = isOffensivePlayer ? `P${i}` : `D${i - 5}`;
+        const label = isOffensivePlayer && d.shortName ? `${roleLabel} (${d.shortName})` : roleLabel;
+        const labelOffset = (isOffensivePlayer ? headshotSize : 2 * radius) / 2 + Math.max(width / 260, 3);
+        const labelY = isOffensivePlayer ? -labelOffset : labelOffset;
 
         group
           .append("text")
@@ -169,7 +168,7 @@ const DrawPlayerVisualization = ({
           .attr("transform", "rotate(90)")
           .style("font-size", "9.5px")
           .style("font-weight", "800")
-          .style("fill", i >= 1 && i <= 5 ? "#0f172a" : "#374151")
+          .style("fill", isOffensivePlayer ? "#0f172a" : defenderStroke)
           .style("stroke", "rgba(255,255,255,0.92)")
           .style("stroke-width", 3)
           .style("paint-order", "stroke")
@@ -178,7 +177,7 @@ const DrawPlayerVisualization = ({
       }
     });
 
-    courtItem.selectAll("g.player-group").filter((_, i) => i > 5).raise();
+    courtItem.selectAll("g.player-group").filter((_, i) => i >= 1 && i <= 5).raise();
     courtItem.selectAll("g.player-group").selectAll(".player-headshot,.player-name-label").raise();
     courtItem.selectAll("g.player-group").filter((d) => d.agent_id === -1).raise();
   }, [playerData, width, T_type, showActionValues, arcGenerator]);
@@ -266,6 +265,8 @@ const DrawPlayerVisualization = ({
             .style("fill", qColorScale(q0))
             .style("opacity", 0.95);
         }
+
+        pGroup.selectAll(".player-headshot,.player-name-label").raise();
       });
     }
   }, [isPlaying, currentStep, newPlayerData, T_type, width, qPlayer, realPlayerActions, showActionValues, qColorScale]);
