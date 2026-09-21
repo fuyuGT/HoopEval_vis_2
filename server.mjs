@@ -41,6 +41,11 @@ const databaseUrl = process.env.DATABASE_URL || "";
 const adminApiToken = process.env.ADMIN_API_TOKEN || "";
 const maxBodyBytes = Number(process.env.MAX_BODY_BYTES || 2_000_000);
 
+// Never silently collect production responses into an ephemeral local file.
+if (process.env.NODE_ENV === "production" && (!databaseUrl || !adminApiToken)) {
+  throw new Error("Production requires DATABASE_URL and ADMIN_API_TOKEN.");
+}
+
 const allowedOrigin = process.env.CORS_ORIGIN || "*";
 const jsonHeaders = {
   "content-type": "application/json; charset=utf-8",
@@ -64,8 +69,14 @@ const pool = databaseUrl
   ? new Pool({
       connectionString: databaseUrl,
       ssl: shouldUseSsl ? { rejectUnauthorized: false } : false,
+      connectionTimeoutMillis: 5000,
+      statement_timeout: 10000,
     })
   : null;
+
+pool?.on("error", () => {
+  console.error("An idle database connection failed; subsequent requests will reconnect.");
+});
 
 let schemaReadyPromise = null;
 
@@ -90,7 +101,10 @@ async function ensureSchema() {
 
       CREATE INDEX IF NOT EXISTS study_sessions_completed_idx
         ON study_sessions (completed_at);
-    `);
+    `).catch((error) => {
+      schemaReadyPromise = null;
+      throw error;
+    });
   }
   await schemaReadyPromise;
 }
@@ -388,7 +402,17 @@ async function handleApi(request, response, url) {
   }
 
   if (url.pathname === "/api/health" && request.method === "GET") {
-    sendJson(response, 200, { ok: true, storage: pool ? "postgres" : "file" });
+    try {
+      if (pool) {
+        await ensureSchema();
+        await pool.query("SELECT 1 FROM study_sessions LIMIT 1");
+      } else {
+        await readFileSessions();
+      }
+      sendJson(response, 200, { ok: true, storage: pool ? "postgres" : "file" });
+    } catch {
+      sendJson(response, 503, { ok: false, storage: pool ? "postgres" : "file", error: "Storage unavailable" });
+    }
     return;
   }
 
@@ -501,5 +525,5 @@ const server = http.createServer(async (request, response) => {
 });
 
 server.listen(port, host, () => {
-  console.log(`HoopEval server running on http://${host}:${port}${basePath}/ using ${pool ? "Postgres" : "file"} storage`);
+  console.log(`HoopEval server running on http://${host}:${server.address().port}${basePath}/ using ${pool ? "Postgres" : "file"} storage`);
 });

@@ -8,6 +8,7 @@
     "dev:api": "node server.mjs",
     "build": "vite build",
     "lint": "eslint .",
+    "test:readiness": "node --test tests/readiness.test.mjs",
     "preview": "vite preview",
     "start": "node server.mjs"
   },

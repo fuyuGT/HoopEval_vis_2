@@ -2,13 +2,18 @@ services:
   - type: web
     name: hoopeval-study
     runtime: node
-    buildCommand: npm install && npm run build
+    buildCommand: npm ci --include=dev && npm run build
     startCommand: npm start
+    healthCheckPath: /api/health
     envVars:
+      - key: NODE_ENV
+        value: production
       - key: NODE_VERSION
         value: 22
       - key: BASE_PATH
         value: /HoopEval_vis_2
+      - key: VITE_BASE_PATH
+        value: /HoopEval_vis_2/
       - key: ADMIN_API_TOKEN
         generateValue: true
       - key: DATABASE_URL
