@@ -1,10 +1,8 @@
 export const studyConfig = {
   practiceSequenceIds: [
     "0021500001_1_1445991320733.json",
-    "0021500001_1_1445991439008.json",
-    "0021500118_2_1447293641800.json",
   ],
-  mainTrialCount: 10,
+  mainTrialCount: 5,
   mainSequenceIds: [
     "0021500020_4_1446181964721.json",
     "0021500022_3_1446251948946.json",

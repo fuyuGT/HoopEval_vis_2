@@ -2066,7 +2066,7 @@ function App() {
   const renderBackground = () => (
     <Section
       title="Background Questionnaire"
-      description="Answer these background questions before the practice trials."
+      description="Answer these background questions before the practice trial."
     >
       <Box sx={{ display: "grid", gap: 1.5, gridTemplateColumns: { xs: "1fr", md: "1fr 1fr" } }}>
         <Box sx={{ gridColumn: { md: "1 / -1" } }}>
